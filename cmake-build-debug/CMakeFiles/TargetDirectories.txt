@@ -1,3 +1,0 @@
-C:/Users/Milan/CLionProjects/CompleteUninstaller/cmake-build-debug/CMakeFiles/CompleteUninstaller.dir
-C:/Users/Milan/CLionProjects/CompleteUninstaller/cmake-build-debug/CMakeFiles/edit_cache.dir
-C:/Users/Milan/CLionProjects/CompleteUninstaller/cmake-build-debug/CMakeFiles/rebuild_cache.dir
