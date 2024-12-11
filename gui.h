@@ -2,6 +2,7 @@
 #include <wx/treectrl.h>
 #include <wx/wx.h>
 
+
 class MyApp : public wxApp
 {
 public:
@@ -16,7 +17,7 @@ public:
 
     void OnQuit(wxCommandEvent& event);
     void OnAbout(wxCommandEvent& event);
-    void OnOpen(wxCommandEvent& event); // added this for uninstall
+    void OnOpen(wxCommandEvent& event); 
 
 private:
     wxDECLARE_EVENT_TABLE();
@@ -35,7 +36,8 @@ enum
 {
     Minimal_Quit = wxID_EXIT,
     Minimal_About = wxID_ABOUT,
-    Minimal_Open = wxID_OPEN
+    Minimal_Open = wxID_OPEN,
+    Run_Selected = wxID_ANY
 };
 
 

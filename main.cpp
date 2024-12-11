@@ -6,14 +6,11 @@
 #include "../sample.xpm"
 #endif
 
-
-
 wxBEGIN_EVENT_TABLE(MyFrame, wxFrame)
 EVT_MENU(Minimal_Quit, MyFrame::OnQuit)
 EVT_MENU(Minimal_About, MyFrame::OnAbout)
-EVT_MENU(Minimal_Open,MyFrame::OnOpen) // I added this for uninstall
-EVT_TREE_SEL_CHANGED(wxID_ANY, MyFrame::OnTreeSelectionChanged)
-//EVT_BUTTON(wxID_ANY, MyFrame::OnUninstallButtonClick)
+EVT_MENU(Minimal_Open,MyFrame::OnOpen)
+EVT_TREE_SEL_CHANGED(Run_Selected, MyFrame::OnTreeSelectionChanged)
 wxEND_EVENT_TABLE()
 
 
@@ -58,37 +55,32 @@ MyFrame::MyFrame(const wxString& title)
     PopulateTreeView();
 
 #if wxUSE_MENUBAR
-    // create a menu bar
     wxMenu* fileMenu = new wxMenu;
 
-    // the "About" item should be in the help menu
     wxMenu* helpMenu = new wxMenu;
     helpMenu->Append(Minimal_About, "&About\tF1", "Show about dialog");
-    fileMenu->Append(Minimal_Open, "&Open\tAlt-O", "Open an item from the list");
+    fileMenu->Append(Minimal_Open, "&Run selected\tAlt-O", "Run the uninstaller for the selected item");
     fileMenu->Append(Minimal_Quit, "E&xit\tAlt-X", "Quit this program");
  
 
-    // now append the freshly created menu to the menu bar...
     wxMenuBar* menuBar = new wxMenuBar();
     menuBar->Append(fileMenu, "&File");
     menuBar->Append(helpMenu, "&Help");
 
-    // ... and attach this menu bar to the frame
     SetMenuBar(menuBar);
 #else // !wxUSE_MENUBAR
-    // If menus are not available add a button to access the about box
     wxSizer* sizer = new wxBoxSizer(wxHORIZONTAL);
     wxButton* aboutBtn = new wxButton(this, wxID_ANY, "About...");
     aboutBtn->Bind(wxEVT_BUTTON, &MyFrame::OnAbout, this);
     sizer->Add(aboutBtn, wxSizerFlags().Center());
     SetSizer(sizer);
-#endif // wxUSE_MENUBAR/!wxUSE_MENUBAR
+#endif 
 
 #if wxUSE_STATUSBAR
-    // create a status bar just for fun (by default with 1 pane only)
+   
     CreateStatusBar(2);
     SetStatusText("Complete Uninstaller 0.1 alpha!");
-#endif // wxUSE_STATUSBAR
+#endif 
 }
 
 
