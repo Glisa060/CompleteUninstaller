@@ -23,4 +23,5 @@ private:
 };;
 
 void GetInstalledPrograms(std::map<wxString, wxString>& programs);
-void GetUserInstalledPrograms(std::map<wxString, wxString>& programs);
+
+void runAsAdmin();

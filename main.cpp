@@ -1,5 +1,7 @@
 #pragma once
 #include "gui.h"
+#include "util.h"
+
 
 
 #ifndef wxHAS_IMAGES_IN_RESOURCES
@@ -51,6 +53,7 @@ MyFrame::MyFrame(const wxString& title)
 
     SetSizer(sizer);
 
+    runAsAdmin();
     OnProgramListUpdated();
     PopulateTreeView();
 

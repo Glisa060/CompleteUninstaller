@@ -60,6 +60,8 @@ void MyFrame::OnOpen(wxCommandEvent& WXUNUSED(event)) {
 		}
 
 		wxLogMessage("Executing standard uninstaller: %s", command);
+
+
 	}
 
 	long result = wxExecute(command, wxEXEC_ASYNC);
@@ -123,4 +125,7 @@ void MyFrame::OnTreeSelectionChanged(wxTreeEvent& event) {
 		}
 	}
 }
+
+
+
 
