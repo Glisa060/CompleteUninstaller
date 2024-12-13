@@ -2,12 +2,6 @@
 #include "gui.h"
 #include "util.h"
 
-
-
-#ifndef wxHAS_IMAGES_IN_RESOURCES
-#include "../sample.xpm"
-#endif
-
 wxBEGIN_EVENT_TABLE(MyFrame, wxFrame)
 EVT_MENU(Minimal_Quit, MyFrame::OnQuit)
 EVT_MENU(Minimal_About, MyFrame::OnAbout)
@@ -57,7 +51,6 @@ MyFrame::MyFrame(const wxString& title)
     OnProgramListUpdated();
     PopulateTreeView();
 
-#if wxUSE_MENUBAR
     wxMenu* fileMenu = new wxMenu;
 
     wxMenu* helpMenu = new wxMenu;
@@ -71,19 +64,9 @@ MyFrame::MyFrame(const wxString& title)
     menuBar->Append(helpMenu, "&Help");
 
     SetMenuBar(menuBar);
-#else // !wxUSE_MENUBAR
-    wxSizer* sizer = new wxBoxSizer(wxHORIZONTAL);
-    wxButton* aboutBtn = new wxButton(this, wxID_ANY, "About...");
-    aboutBtn->Bind(wxEVT_BUTTON, &MyFrame::OnAbout, this);
-    sizer->Add(aboutBtn, wxSizerFlags().Center());
-    SetSizer(sizer);
-#endif 
-
-#if wxUSE_STATUSBAR
-   
     CreateStatusBar(2);
     SetStatusText("Complete Uninstaller 0.1 alpha!");
-#endif 
+
 }
 
 

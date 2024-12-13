@@ -125,7 +125,3 @@ void MyFrame::OnTreeSelectionChanged(wxTreeEvent& event) {
 		}
 	}
 }
-
-
-
-
