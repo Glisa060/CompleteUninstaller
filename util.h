@@ -25,3 +25,8 @@ private:
 void GetInstalledPrograms(std::map<wxString, wxString>& programs);
 
 void runAsAdmin();
+
+void SearchLeftoverFiles(const std::vector<std::wstring>& paths);
+void SearchRegistryKeys(const std::vector<std::wstring>& registryPaths);
+void SearchServicesAndProcesses(const std::wstring& programName);
+void CleanUpLeftovers();

@@ -78,6 +78,8 @@ void MyFrame::OnOpen(wxCommandEvent& WXUNUSED(event)) {
 			"Success",
 			wxOK | wxICON_INFORMATION,
 			this);
+
+		CleanUpLeftovers();
 	}
 }
 
