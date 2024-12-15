@@ -1,6 +1,8 @@
 #pragma once
 #include <wx/treectrl.h>
 #include <wx/wx.h>
+#include <wx/filename.h>
+#include <cstring>
 
 
 class MyApp : public wxApp

@@ -8,9 +8,6 @@
 #include <winreg.h>
 #include <wx/msgdlg.h>
 
-
-
-
 class ErrorDialog : public wxDialog {
 public:
 	ErrorDialog(wxWindow* parent, const wxString& message, const wxString& title);
@@ -26,7 +23,7 @@ void GetInstalledPrograms(std::map<wxString, wxString>& programs);
 
 void runAsAdmin();
 
-void SearchLeftoverFiles(const std::vector<std::wstring>& paths);
-void SearchRegistryKeys(const std::vector<std::wstring>& registryPaths);
+void SearchLeftoverFiles(const std::vector<std::wstring>& paths, const std::string program);
+void SearchRegistryKeys(const std::vector<std::wstring>& registryPaths, char* programName);
 void SearchServicesAndProcesses(const std::wstring& programName);
-void CleanUpLeftovers();
+void CleanUpLeftovers(std::string programName, char* regPath);

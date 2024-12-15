@@ -1,6 +1,7 @@
 #pragma once
 #include "util.h"
 #include <shlobj.h>
+#include <format>
 
 ErrorDialog::ErrorDialog(wxWindow* parent, const wxString& message, const wxString& title)
 	: wxDialog(parent, wxID_ANY, title, wxDefaultPosition, wxSize(300, 200)),
@@ -90,20 +91,26 @@ void runAsAdmin() {
 }
 
 // Detect leftover files
-void SearchLeftoverFiles(const std::vector<std::wstring>& paths) {
+void SearchLeftoverFiles(const std::vector<std::wstring>& paths, const std::string program) {
+
     for (const auto& path : paths) {
         WIN32_FIND_DATA findFileData;
-        HANDLE hFind = FindFirstFile((path + L"\\*").c_str(), &findFileData);
+        std::string path_string(path.begin(), path.end());
+        std::string fullPath = path_string + program;
+        std::wstring wFullPath(fullPath.begin(), fullPath.end());
+        wxLogInfo("Path with folder is: %s", wFullPath.c_str());
+
+        HANDLE hFind = FindFirstFile(wFullPath.c_str(), &findFileData);
 
         if (hFind == INVALID_HANDLE_VALUE) {
-            std::wcout << L"Directory not found: " << path << std::endl;
+            wxLogError("Directory not found %s", wFullPath.c_str());
             continue;
         }
 
         do {
             const std::wstring fileName = findFileData.cFileName;
             if (fileName != L"." && fileName != L"..") {
-                std::wcout << L"Found leftover file/folder: " << path + L"\\" + fileName << std::endl;
+                wxLogInfo("Found leftover file/folder: %s, %s", path, fileName);
             }
         } while (FindNextFile(hFind, &findFileData));
 
@@ -112,7 +119,8 @@ void SearchLeftoverFiles(const std::vector<std::wstring>& paths) {
 }
 
 // Detect leftover registry keys
-void SearchRegistryKeys(const std::vector<std::wstring>& registryPaths) {
+void SearchRegistryKeys(const std::vector<std::wstring>& registryPaths, char* programName) {
+    int numberOfKeys = 0;
     for (const auto& subKey : registryPaths) {
         HKEY hKey;
         if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, subKey.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
@@ -120,15 +128,16 @@ void SearchRegistryKeys(const std::vector<std::wstring>& registryPaths) {
             DWORD nameSize = sizeof(name) / sizeof(name[0]);
             DWORD index = 0;
 
-            while (RegEnumKeyEx(hKey, index++, name, &nameSize, NULL, NULL, NULL, NULL) == ERROR_SUCCESS) {
-                std::wcout << L"Found leftover registry key: " << subKey + L"\\" + name << std::endl;
-                nameSize = sizeof(name) / sizeof(name[0]);
+            while (RegEnumKeyExA(hKey, index++, programName, &nameSize, NULL, NULL, NULL, NULL) == ERROR_SUCCESS) {
+                numberOfKeys++;
+                wxLogInfo("Found leftover registry key: %s, %s", subKey, programName);
             }
+            wxLogInfo("Number of keys found is: %i", numberOfKeys);
 
             RegCloseKey(hKey);
         }
         else {
-            std::wcout << L"Registry key not found: " << subKey << std::endl;
+            wxLogError("Registry key not found: %s", subKey);
         }
     }
 }
@@ -153,7 +162,7 @@ void SearchServicesAndProcesses(const std::wstring& programName) {
             for (DWORD i = 0; i < serviceCount; i++) {
                 std::wstring serviceName = services[i].lpServiceName;
                 if (serviceName.find(programName) != std::wstring::npos) {
-                    std::wcout << L"Found leftover service: " << serviceName << std::endl;
+                    wxLogInfo("Found leftover service: %s", serviceName);
                 }
             }
         }
@@ -165,23 +174,23 @@ void SearchServicesAndProcesses(const std::wstring& programName) {
     // Add similar logic to check for related processes.
 }
 
-// Cleanup leftovers
-void CleanUpLeftovers() {
+// Cleanup leftovers 
+void CleanUpLeftovers(std::string programName, char* regPath) {
     // Define known paths and registry locations
     std::vector<std::wstring> filePaths = {
-        L"C:\\Program Files\\ProgramName",
-        L"C:\\Users\\%USERNAME%\\AppData\\Local\\ProgramName",
-        L"C:\\Users\\%USERNAME%\\AppData\\Roaming\\ProgramName"
+        L"C:\\Program Files\\",
+        L"C:\\Users\\%USERNAME%\\AppData\\Local\\",
+        L"C:\\Users\\%USERNAME%\\AppData\\Roaming\\"
     };
 
     std::vector<std::wstring> registryPaths = {
-        L"SOFTWARE\\ProgramName",
-        L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\ProgramName"
+        L"SOFTWARE\\",
+        L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
     };
 
     // Detect leftover files and registry entries
-    SearchLeftoverFiles(filePaths);
-    SearchRegistryKeys(registryPaths);
+    SearchLeftoverFiles(filePaths, programName);
+    SearchRegistryKeys(registryPaths, regPath);
 
     // Detect leftover services or processes
     SearchServicesAndProcesses(L"ProgramName");

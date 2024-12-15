@@ -1,6 +1,8 @@
 #include "gui.h"
 #include "util.h"
 
+
+
 std::map<wxString, wxString> installedPrograms;
 std::map<wxString, std::string> uninstallerPaths;
 std::string selectedUninstallerPath;
@@ -79,7 +81,12 @@ void MyFrame::OnOpen(wxCommandEvent& WXUNUSED(event)) {
 			wxOK | wxICON_INFORMATION,
 			this);
 
-		CleanUpLeftovers();
+		char* regPath = _strdup(command);
+		wxFileName fileName(command);
+		wxString folderName = fileName.GetDirs().Last();
+		char* folderNameCopy = _strdup(folderName);
+		wxLogInfo("Name that is passed: %s", folderName);
+		CleanUpLeftovers(folderNameCopy, regPath);
 	}
 }
 
