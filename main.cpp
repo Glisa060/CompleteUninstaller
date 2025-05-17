@@ -1,63 +1,39 @@
-#pragma once
 #include "gui.h"
 #include "util.h"
-
-wxBEGIN_EVENT_TABLE(MyFrame, wxFrame)
-EVT_MENU(Minimal_Quit, MyFrame::OnQuit)
-EVT_MENU(Minimal_About, MyFrame::OnAbout)
-EVT_MENU(Minimal_Open,MyFrame::OnOpen)
-EVT_TREE_SEL_CHANGED(Run_Selected, MyFrame::OnTreeSelectionChanged)
-wxEND_EVENT_TABLE()
-
-
-wxIMPLEMENT_APP(MyApp);
-
-bool MyApp::OnInit()
-{
-    if (!wxApp::OnInit())
-        return false;
-
-    FILE* logFile = fopen("logfile.txt", "w");
-
-    if (logFile == nullptr) {
-        wxLogError("Failed to open log file!");
-        return false;
-    }
-
-    wxLog::SetActiveTarget(new wxLogStderr(logFile, wxConvUTF8));    
-    MyFrame* frame = new MyFrame("Complete Uninstaller 0.1 alpha");
-
-    frame->Show(true);
-
-    return true;
-}
 
 MyFrame::MyFrame(const wxString& title)
     : wxFrame(NULL, wxID_ANY, title, wxDefaultPosition, wxSize(600, 400))
 {
-
     wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
 
-    SetIcon(wxICON(sample));
+    // Prvo napravi splitter
+    wxSplitterWindow* splitter = new wxSplitterWindow(this, wxID_ANY);
 
-    treeCtrl = new wxTreeCtrl(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+    // Sada kreiraj tree view-ove sa splitterom kao roditeljem
+    treeCtrl = new wxTreeCtrl(splitter, wxID_ANY, wxDefaultPosition, wxDefaultSize,
         wxTR_HAS_BUTTONS | wxTR_LINES_AT_ROOT);
 
-    sizer->Add(treeCtrl, 1, wxEXPAND | wxALL, 5);
+    leftoverTreeCtrl = new wxTreeCtrl(splitter, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+        wxTR_HAS_BUTTONS | wxTR_LINES_AT_ROOT);
 
-    SetSizer(sizer);
+    splitter->SplitVertically(treeCtrl, leftoverTreeCtrl);
+    wxSize size = GetClientSize(); 
+    int halfWidth = size.GetWidth() / 2;
+    splitter->SetSashPosition(halfWidth);
+    sizer->Add(splitter, 1, wxEXPAND | wxALL, 5);
 
-    runAsAdmin();
+    SetSizer(sizer); 
+
+    runAsAdmin(this);
     OnProgramListUpdated();
-    PopulateTreeView();
 
+    // Menu setup
     wxMenu* fileMenu = new wxMenu;
-
     wxMenu* helpMenu = new wxMenu;
+
     helpMenu->Append(Minimal_About, "&About\tF1", "Show about dialog");
     fileMenu->Append(Minimal_Open, "&Run selected\tAlt-O", "Run the uninstaller for the selected item");
     fileMenu->Append(Minimal_Quit, "E&xit\tAlt-X", "Quit this program");
- 
 
     wxMenuBar* menuBar = new wxMenuBar();
     menuBar->Append(fileMenu, "&File");
@@ -66,8 +42,8 @@ MyFrame::MyFrame(const wxString& title)
     SetMenuBar(menuBar);
     CreateStatusBar(2);
     SetStatusText("Complete Uninstaller 0.1 alpha!");
-
 }
+
 
 
 

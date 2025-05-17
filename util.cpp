@@ -1,7 +1,5 @@
-#pragma once
 #include "util.h"
-#include <shlobj.h>
-#include <format>
+
 
 ErrorDialog::ErrorDialog(wxWindow* parent, const wxString& message, const wxString& title)
 	: wxDialog(parent, wxID_ANY, title, wxDefaultPosition, wxSize(300, 200)),
@@ -60,142 +58,196 @@ void GetInstalledPrograms(std::map<wxString, wxString>& programs) {
 	RegCloseKey(hKey);
 }
 
-void runAsAdmin() {
+std::wstring GetKnownFolderPath(REFKNOWNFOLDERID folderId) {
+	PWSTR path = nullptr;
+	std::wstring result;
+
+	if (SUCCEEDED(SHGetKnownFolderPath(folderId, 0, NULL, &path))) {
+		result = path;
+		CoTaskMemFree(path);
+	}
+
+	return result;
+}
+
+std::wstring GetProgramFilesDir() {
+	WCHAR path[MAX_PATH];
+	if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_PROGRAM_FILES, NULL, 0, path))) {
+		return std::wstring(path);
+	}
+	return L"C:\\Program Files";
+}
+
+std::wstring GetProgramFilesX86Dir() {
+	WCHAR path[MAX_PATH];
+	if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_PROGRAM_FILESX86, NULL, 0, path))) {
+		return std::wstring(path);
+	}
+	return L"C:\\Program Files (x86)";
+}
+void runAsAdmin(wxFrame* mainFrame = nullptr) {
 	if (IsUserAnAdmin()) {
 		wxLogInfo("Already running as administrator.");
 		return;
 	}
 
 	wchar_t currentPath[MAX_PATH];
-
-	if (GetModuleFileName(NULL, currentPath, MAX_PATH) == 0) {
+	if (GetModuleFileNameW(NULL, currentPath, MAX_PATH) == 0) {
 		wxLogError("Failed to get current executable path!");
 		return;
 	}
-	HINSTANCE result = ShellExecute(
-		NULL,
-		L"runas",
-		currentPath,
-		NULL,
-		NULL,
-		SW_SHOWNORMAL
-	);
 
-	if ((std::intptr_t)result <= 32) {
-		wxLogError("Failed to relaunch with admin rights!");
+	SHELLEXECUTEINFOW sei = { sizeof(sei) };
+	sei.lpVerb = L"runas";
+	sei.lpFile = currentPath;
+	sei.nShow = SW_SHOWNORMAL;
+	sei.fMask = SEE_MASK_NOASYNC;
+
+	if (!ShellExecuteExW(&sei)) {
+		DWORD err = GetLastError();
+		wxLogError("Failed to relaunch with admin rights! Error code: %lu", err);
+		return;
+	}
+
+	wxLogInfo("Program relaunched with admin rights. Exiting current instance...");
+
+	// Umesto exit(0), koristi bezbedno zatvaranje:
+	if (mainFrame) {
+		mainFrame->Close(); // zatvori samo prozor
 	}
 	else {
-		wxLogInfo("Program relaunched with admin rights!");
-		exit(0);
+		wxTheApp->ExitMainLoop(); // sigurno zatvara aplikaciju
 	}
 }
 
 // Detect leftover files
-void SearchLeftoverFiles(const std::vector<std::wstring>& paths, const std::string program) {
+std::vector<std::wstring> SearchLeftoverFiles(const std::vector<std::wstring>& paths, const std::string& programName) {
+	std::vector<std::wstring> found;
 
-    for (const auto& path : paths) {
-        WIN32_FIND_DATA findFileData;
-        std::string path_string(path.begin(), path.end());
-        std::string fullPath = path_string + program;
-        std::wstring wFullPath(fullPath.begin(), fullPath.end());
-        wxLogInfo("Path with folder is: %s", wFullPath.c_str());
+	for (const auto& basePath : paths) {
+		std::wstring fullPath = basePath + std::wstring(programName.begin(), programName.end());
+		if (PathFileExistsW(fullPath.c_str())) {
 
-        HANDLE hFind = FindFirstFile(wFullPath.c_str(), &findFileData);
+			found.push_back(fullPath);
+		}
+	}
 
-        if (hFind == INVALID_HANDLE_VALUE) {
-            wxLogError("Directory not found %s", wFullPath.c_str());
-            continue;
-        }
-
-        do {
-            const std::wstring fileName = findFileData.cFileName;
-            if (fileName != L"." && fileName != L"..") {
-                wxLogInfo("Found leftover file/folder: %s, %s", path, fileName);
-            }
-        } while (FindNextFile(hFind, &findFileData));
-
-        FindClose(hFind);
-    }
+	return found;
 }
+
 
 // Detect leftover registry keys
-void SearchRegistryKeys(const std::vector<std::wstring>& registryPaths, char* programName) {
-    int numberOfKeys = 0;
-    for (const auto& subKey : registryPaths) {
-        HKEY hKey;
-        if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, subKey.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-            WCHAR name[256];
-            DWORD nameSize = sizeof(name) / sizeof(name[0]);
-            DWORD index = 0;
+ std::vector<std::wstring> SearchRegistryKeys(const std::vector<std::wstring>& registryPaths, const std::string& programName) {
+	std::vector<std::wstring> foundKeys;
 
-            while (RegEnumKeyExA(hKey, index++, programName, &nameSize, NULL, NULL, NULL, NULL) == ERROR_SUCCESS) {
-                numberOfKeys++;
-                wxLogInfo("Found leftover registry key: %s, %s", subKey, programName);
-            }
-            wxLogInfo("Number of keys found is: %i", numberOfKeys);
+	for (const auto& subKey : registryPaths) {
+		HKEY hKey;
+		if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, subKey.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+			WCHAR keyName[256];
+			DWORD keyNameLen = 256;
+			DWORD index = 0;
 
-            RegCloseKey(hKey);
-        }
-        else {
-            wxLogError("Registry key not found: %s", subKey);
-        }
-    }
+			while (RegEnumKeyExW(hKey, index++, keyName, &keyNameLen, NULL, NULL, NULL, NULL) == ERROR_SUCCESS) {
+				std::wstring nameStr(keyName);
+				keyNameLen = 256; // reset size
+
+				std::string progNameStr(programName);
+				std::wstring progNameW(progNameStr.begin(), progNameStr.end());
+
+				if (nameStr.find(progNameW) != std::wstring::npos) {
+					std::wstring fullKey = subKey + nameStr;
+					foundKeys.push_back(fullKey);
+					wxLogInfo("Found leftover registry key: %s", wxString(fullKey));
+				}
+			}
+
+			RegCloseKey(hKey);
+		}
+		else {
+			wxLogError("Registry path not found or inaccessible: %s", wxString(subKey));
+		}
+	}
+
+	return foundKeys;
 }
+
 
 // Detect services and processes
-void SearchServicesAndProcesses(const std::wstring& programName) {
-    // Example: Enumerate services
-    SC_HANDLE hSCManager = OpenSCManager(NULL, NULL, SC_MANAGER_ENUMERATE_SERVICE);
-    if (hSCManager) {
-        DWORD bytesNeeded;
-        DWORD serviceCount;
-        DWORD resumeHandle = 0;
+std::vector<std::wstring> SearchServicesAndProcesses(const std::wstring& programName) {
+	std::vector<std::wstring> foundServices;
 
-        EnumServicesStatusEx(hSCManager, SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_ACTIVE, NULL, 0, &bytesNeeded,
-            &serviceCount, &resumeHandle, NULL);
+	SC_HANDLE hSCManager = OpenSCManagerW(NULL, NULL, SC_MANAGER_ENUMERATE_SERVICE);
+	if (hSCManager) {
+		DWORD bytesNeeded = 0, serviceCount = 0, resumeHandle = 0;
 
-        BYTE* buffer = new BYTE[bytesNeeded];
-        if (EnumServicesStatusEx(hSCManager, SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_ACTIVE, buffer, bytesNeeded,
-            &bytesNeeded, &serviceCount, &resumeHandle, NULL)) {
-            LPENUM_SERVICE_STATUS_PROCESS services = (LPENUM_SERVICE_STATUS_PROCESS)buffer;
+		// Get required buffer size
+		EnumServicesStatusExW(hSCManager, SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_ACTIVE,
+			NULL, 0, &bytesNeeded, &serviceCount, &resumeHandle, NULL);
 
-            for (DWORD i = 0; i < serviceCount; i++) {
-                std::wstring serviceName = services[i].lpServiceName;
-                if (serviceName.find(programName) != std::wstring::npos) {
-                    wxLogInfo("Found leftover service: %s", serviceName);
-                }
-            }
-        }
-        delete[] buffer;
-        CloseServiceHandle(hSCManager);
-    }
+		BYTE* buffer = new BYTE[bytesNeeded];
+		if (EnumServicesStatusExW(hSCManager, SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_ACTIVE,
+			buffer, bytesNeeded, &bytesNeeded, &serviceCount, &resumeHandle, NULL)) {
 
-    // Example: Enumerate processes (using EnumProcesses or ToolHelp APIs)
-    // Add similar logic to check for related processes.
+			LPENUM_SERVICE_STATUS_PROCESS services = reinterpret_cast<LPENUM_SERVICE_STATUS_PROCESS>(buffer);
+
+			for (DWORD i = 0; i < serviceCount; ++i) {
+				std::wstring serviceName(services[i].lpServiceName);
+				if (serviceName.find(programName) != std::wstring::npos) {
+					foundServices.push_back(serviceName);
+					wxLogInfo("Found leftover service: %s", wxString(serviceName));
+				}
+			}
+		}
+		else {
+			wxLogError("Failed to enumerate services.");
+		}
+
+		delete[] buffer;
+		CloseServiceHandle(hSCManager);
+	}
+	else {
+		wxLogError("Failed to open service control manager.");
+	}
+
+	// You can also scan running processes here if needed
+
+	return foundServices;
 }
+
 
 // Cleanup leftovers 
-void CleanUpLeftovers(std::string programName, char* regPath) {
-    // Define known paths and registry locations
-    std::vector<std::wstring> filePaths = {
-        L"C:\\Program Files\\",
-        L"C:\\Users\\%USERNAME%\\AppData\\Local\\",
-        L"C:\\Users\\%USERNAME%\\AppData\\Roaming\\"
-    };
+std::vector<std::wstring> CleanUpLeftovers(const std::string& programName, const std::string& regPath) {
+	std::vector<std::wstring> leftovers;
 
-    std::vector<std::wstring> registryPaths = {
-        L"SOFTWARE\\",
-        L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
-    };
+	std::wstring localAppData = GetKnownFolderPath(FOLDERID_LocalAppData);
+	std::wstring roamingAppData = GetKnownFolderPath(FOLDERID_RoamingAppData);
+	std::wstring programData = GetKnownFolderPath(FOLDERID_ProgramData);
+	std::wstring programFiles = GetProgramFilesDir();
+	std::wstring programFilesX86 = GetProgramFilesX86Dir();
 
-    // Detect leftover files and registry entries
-    SearchLeftoverFiles(filePaths, programName);
-    SearchRegistryKeys(registryPaths, regPath);
+	std::vector<std::wstring> filePaths = {
+		programFiles,
+		programFilesX86,
+		localAppData,
+		roamingAppData,
+		programData
+	};
 
-    // Detect leftover services or processes
-    SearchServicesAndProcesses(L"ProgramName");
+	std::vector<std::wstring> registryPaths = {
+		L"SOFTWARE\\",
+		L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
+	};
+
+	std::vector<std::wstring> fileLeftovers = SearchLeftoverFiles(filePaths, programName);
+	leftovers.insert(leftovers.end(), fileLeftovers.begin(), fileLeftovers.end());
+
+	std::vector<std::wstring> regLeftovers = SearchRegistryKeys(registryPaths, regPath);
+	leftovers.insert(leftovers.end(), regLeftovers.begin(), regLeftovers.end());
+
+	std::vector<std::wstring> serviceLeftovers = SearchServicesAndProcesses(std::wstring(programName.begin(), programName.end()));
+	leftovers.insert(leftovers.end(), serviceLeftovers.begin(), serviceLeftovers.end());
+
+	return leftovers;
 }
-
-
 
 
