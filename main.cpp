@@ -1,5 +1,12 @@
+
+#include <wx/wx.h>
+#include <wx/treectrl.h>
+#include <wx/splitter.h>
+#include <wx/busyinfo.h>
 #include "gui.h"
 #include "util.h"
+
+
 
 MyFrame::MyFrame(const wxString& title)
     : wxFrame(NULL, wxID_ANY, title, wxDefaultPosition, wxSize(600, 400))
@@ -34,6 +41,7 @@ MyFrame::MyFrame(const wxString& title)
     helpMenu->Append(Minimal_About, "&About\tF1", "Show about dialog");
     fileMenu->Append(Minimal_Open, "&Run selected\tAlt-O", "Run the uninstaller for the selected item");
     fileMenu->Append(Minimal_Quit, "E&xit\tAlt-X", "Quit this program");
+    fileMenu->Append(Minimal_Analyse, "&Analyse selected\tAlt-A", "Analyse leftovers of the selected program");
 
     wxMenuBar* menuBar = new wxMenuBar();
     menuBar->Append(fileMenu, "&File");
