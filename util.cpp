@@ -1,16 +1,31 @@
+#include <wx/app.h>
+#include <wx/busyinfo.h>
+#include <wx/log.h>
+#include <wx/string.h>
+#include <wx/frame.h>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <map>
+#include <string>
+#include <thread>
+#include <functional>
+#include <winreg.h>
+#include <shellapi.h>
+#include <errhandlingapi.h>
+#include <KnownFolders.h>
+#include <libloaderapi.h>
+#include <ShlObj_core.h>
+#include <algorithm>
+#include <cctype>
+#include <vector>
+#include <filesystem>
+#include "file_utils.h"
+#include "process_utils.h"
+#include "registry_utils.h"
 #include "util.h"
 
 
-ErrorDialog::ErrorDialog(wxWindow* parent, const wxString& message, const wxString& title)
-	: wxDialog(parent, wxID_ANY, title, wxDefaultPosition, wxSize(300, 200)),
-	m_message(message), m_title(title) {
-	// You can add other initialization code here
-}
-
-void ErrorDialog::ShowErrorMessage() const {
-	wxMessageBox(m_message, m_title, wxICON_ERROR | wxOK);
-}
-
+namespace fs = std::filesystem;
 
 void GetInstalledPrograms(std::map<wxString, wxString>& programs) {
 	HKEY hKey;
@@ -58,34 +73,9 @@ void GetInstalledPrograms(std::map<wxString, wxString>& programs) {
 	RegCloseKey(hKey);
 }
 
-std::wstring GetKnownFolderPath(REFKNOWNFOLDERID folderId) {
-	PWSTR path = nullptr;
-	std::wstring result;
 
-	if (SUCCEEDED(SHGetKnownFolderPath(folderId, 0, NULL, &path))) {
-		result = path;
-		CoTaskMemFree(path);
-	}
 
-	return result;
-}
-
-std::wstring GetProgramFilesDir() {
-	WCHAR path[MAX_PATH];
-	if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_PROGRAM_FILES, NULL, 0, path))) {
-		return std::wstring(path);
-	}
-	return L"C:\\Program Files";
-}
-
-std::wstring GetProgramFilesX86Dir() {
-	WCHAR path[MAX_PATH];
-	if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_PROGRAM_FILESX86, NULL, 0, path))) {
-		return std::wstring(path);
-	}
-	return L"C:\\Program Files (x86)";
-}
-void runAsAdmin(wxFrame* mainFrame = nullptr) {
+void runAsAdmin(wxFrame* mainFrame) {
 	if (IsUserAnAdmin()) {
 		wxLogInfo("Already running as administrator.");
 		return;
@@ -120,134 +110,95 @@ void runAsAdmin(wxFrame* mainFrame = nullptr) {
 	}
 }
 
-// Detect leftover files
-std::vector<std::wstring> SearchLeftoverFiles(const std::vector<std::wstring>& paths, const std::string& programName) {
-	std::vector<std::wstring> found;
-
-	for (const auto& basePath : paths) {
-		std::wstring fullPath = basePath + std::wstring(programName.begin(), programName.end());
-		if (PathFileExistsW(fullPath.c_str())) {
-
-			found.push_back(fullPath);
-		}
-	}
-
-	return found;
-}
-
-
 // Detect leftover registry keys
- std::vector<std::wstring> SearchRegistryKeys(const std::vector<std::wstring>& registryPaths, const std::string& programName) {
-	std::vector<std::wstring> foundKeys;
-
-	for (const auto& subKey : registryPaths) {
-		HKEY hKey;
-		if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, subKey.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-			WCHAR keyName[256];
-			DWORD keyNameLen = 256;
-			DWORD index = 0;
-
-			while (RegEnumKeyExW(hKey, index++, keyName, &keyNameLen, NULL, NULL, NULL, NULL) == ERROR_SUCCESS) {
-				std::wstring nameStr(keyName);
-				keyNameLen = 256; // reset size
-
-				std::string progNameStr(programName);
-				std::wstring progNameW(progNameStr.begin(), progNameStr.end());
-
-				if (nameStr.find(progNameW) != std::wstring::npos) {
-					std::wstring fullKey = subKey + nameStr;
-					foundKeys.push_back(fullKey);
-					wxLogInfo("Found leftover registry key: %s", wxString(fullKey));
-				}
-			}
-
-			RegCloseKey(hKey);
-		}
-		else {
-			wxLogError("Registry path not found or inaccessible: %s", wxString(subKey));
-		}
-	}
-
-	return foundKeys;
+// Pomocna funkcija za poredjenje stringova bez obzira na velika/mala slova
+bool ContainsIgnoreCase(const std::wstring& haystack, const std::wstring& needle) {
+	std::wstring h = haystack;
+	std::wstring n = needle;
+	std::transform(h.begin(), h.end(), h.begin(), ::towlower);
+	std::transform(n.begin(), n.end(), n.begin(), ::towlower);
+	return h.find(n) != std::wstring::npos;
 }
 
 
-// Detect services and processes
-std::vector<std::wstring> SearchServicesAndProcesses(const std::wstring& programName) {
-	std::vector<std::wstring> foundServices;
-
-	SC_HANDLE hSCManager = OpenSCManagerW(NULL, NULL, SC_MANAGER_ENUMERATE_SERVICE);
-	if (hSCManager) {
-		DWORD bytesNeeded = 0, serviceCount = 0, resumeHandle = 0;
-
-		// Get required buffer size
-		EnumServicesStatusExW(hSCManager, SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_ACTIVE,
-			NULL, 0, &bytesNeeded, &serviceCount, &resumeHandle, NULL);
-
-		BYTE* buffer = new BYTE[bytesNeeded];
-		if (EnumServicesStatusExW(hSCManager, SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_ACTIVE,
-			buffer, bytesNeeded, &bytesNeeded, &serviceCount, &resumeHandle, NULL)) {
-
-			LPENUM_SERVICE_STATUS_PROCESS services = reinterpret_cast<LPENUM_SERVICE_STATUS_PROCESS>(buffer);
-
-			for (DWORD i = 0; i < serviceCount; ++i) {
-				std::wstring serviceName(services[i].lpServiceName);
-				if (serviceName.find(programName) != std::wstring::npos) {
-					foundServices.push_back(serviceName);
-					wxLogInfo("Found leftover service: %s", wxString(serviceName));
-				}
-			}
-		}
-		else {
-			wxLogError("Failed to enumerate services.");
-		}
-
-		delete[] buffer;
-		CloseServiceHandle(hSCManager);
-	}
-	else {
-		wxLogError("Failed to open service control manager.");
-	}
-
-	// You can also scan running processes here if needed
-
-	return foundServices;
-}
 
 
 // Cleanup leftovers 
-std::vector<std::wstring> CleanUpLeftovers(const std::string& programName, const std::string& regPath) {
-	std::vector<std::wstring> leftovers;
+void CleanUpLeftovers(const std::string& programName, const wxString& regPath, std::function<void()> onFinished)
+{
+	wxBusyInfo* busy = new wxBusyInfo("Cleaning leftovers, please wait...");
 
-	std::wstring localAppData = GetKnownFolderPath(FOLDERID_LocalAppData);
-	std::wstring roamingAppData = GetKnownFolderPath(FOLDERID_RoamingAppData);
-	std::wstring programData = GetKnownFolderPath(FOLDERID_ProgramData);
-	std::wstring programFiles = GetProgramFilesDir();
-	std::wstring programFilesX86 = GetProgramFilesX86Dir();
+	std::thread([programName, regPath, onFinished, busy]() {
+		wxLogMessage("Starting cleanup for program: %s", programName);
+		wxLogMessage("Registry path: %s", regPath);
 
-	std::vector<std::wstring> filePaths = {
-		programFiles,
-		programFilesX86,
-		localAppData,
-		roamingAppData,
-		programData
-	};
+		std::wstring localAppData = GetKnownFolderPath(FOLDERID_LocalAppData);
+		wxLogMessage("LocalAppData folder: %s", wxString(localAppData));
 
-	std::vector<std::wstring> registryPaths = {
-		L"SOFTWARE\\",
-		L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
-	};
+		std::wstring roamingAppData = GetKnownFolderPath(FOLDERID_RoamingAppData);
+		wxLogMessage("RoamingAppData folder: %s", wxString(roamingAppData));
 
-	std::vector<std::wstring> fileLeftovers = SearchLeftoverFiles(filePaths, programName);
-	leftovers.insert(leftovers.end(), fileLeftovers.begin(), fileLeftovers.end());
+		std::wstring programData = GetKnownFolderPath(FOLDERID_ProgramData);
+		wxLogMessage("ProgramData folder: %s", wxString(programData));
 
-	std::vector<std::wstring> regLeftovers = SearchRegistryKeys(registryPaths, regPath);
-	leftovers.insert(leftovers.end(), regLeftovers.begin(), regLeftovers.end());
+		std::wstring programFiles = GetProgramFilesDir();
+		wxLogMessage("ProgramFiles folder: %s", wxString(programFiles));
 
-	std::vector<std::wstring> serviceLeftovers = SearchServicesAndProcesses(std::wstring(programName.begin(), programName.end()));
-	leftovers.insert(leftovers.end(), serviceLeftovers.begin(), serviceLeftovers.end());
+		std::wstring programFilesX86 = GetProgramFilesX86Dir();
+		wxLogMessage("ProgramFilesX86 folder: %s", wxString(programFilesX86));
 
-	return leftovers;
+		std::vector<std::wstring> filePaths = {
+			programFiles,
+			programFilesX86,
+			localAppData,
+			roamingAppData,
+			programData
+		};
+
+		std::vector<std::wstring> registrySearchPaths = {
+			L"SOFTWARE\\",
+			L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
+		};
+
+		// Pretraga fajlova za brisanje
+		auto fileLeftovers = SearchLeftoverFiles(filePaths, programName);
+
+		for (const auto& filePath : fileLeftovers) {
+			wxTheApp->CallAfter([filePath]() {
+				wxLogMessage("Deleting leftover file/folder: %s", wxString(filePath));
+			});
+			DeleteFileOrFolder(filePath);
+		}
+
+		// Pretraga registry kljuceva za brisanje
+		auto regLeftovers = SearchRegistryKeys(registrySearchPaths, regPath);
+
+		for (const auto& regKey : regLeftovers) {
+			wxTheApp->CallAfter([regKey]() {
+				wxLogMessage("Deleting leftover registry key: %s", wxString(regKey));
+			});
+			RegDeleteKeyRecursive(HKEY_LOCAL_MACHINE, regKey);
+		}
+
+		// Pretraga i brisanje servisa/procesa
+		auto serviceLeftovers = SearchServicesAndProcesses(std::wstring(programName.begin(), programName.end()));
+
+		for (const auto& serviceName : serviceLeftovers) {
+			wxTheApp->CallAfter([serviceName]() {
+				wxLogMessage("Stopping and deleting leftover service/process: %s", wxString(serviceName));
+			});
+			StopAndDeleteService(serviceName);
+		}
+
+		// Uništi wxBusyInfo u glavnom thread-u
+		wxTheApp->CallAfter([busy]() {
+			delete busy;
+		});
+
+		// Pozovi callback da javi da je gotovo
+		wxTheApp->CallAfter([onFinished]() {
+			onFinished();
+		});
+
+	}).detach();
 }
-
-
