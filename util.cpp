@@ -2,6 +2,7 @@
 #include <wx/busyinfo.h>
 #include <wx/log.h>
 #include <wx/string.h>
+#include <wx/msgdlg.h>
 #include <wx/frame.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -16,13 +17,13 @@
 #include <libloaderapi.h>
 #include <ShlObj_core.h>
 #include <algorithm>
-#include <cctype>
 #include <vector>
 #include <filesystem>
 #include "file_utils.h"
 #include "process_utils.h"
 #include "registry_utils.h"
 #include "util.h"
+
 
 
 namespace fs = std::filesystem;
@@ -73,45 +74,7 @@ void GetInstalledPrograms(std::map<wxString, wxString>& programs) {
 	RegCloseKey(hKey);
 }
 
-
-
-void runAsAdmin(wxFrame* mainFrame) {
-	if (IsUserAnAdmin()) {
-		wxLogInfo("Already running as administrator.");
-		return;
-	}
-
-	wchar_t currentPath[MAX_PATH];
-	if (GetModuleFileNameW(NULL, currentPath, MAX_PATH) == 0) {
-		wxLogError("Failed to get current executable path!");
-		return;
-	}
-
-	SHELLEXECUTEINFOW sei = { sizeof(sei) };
-	sei.lpVerb = L"runas";
-	sei.lpFile = currentPath;
-	sei.nShow = SW_SHOWNORMAL;
-	sei.fMask = SEE_MASK_NOASYNC;
-
-	if (!ShellExecuteExW(&sei)) {
-		DWORD err = GetLastError();
-		wxLogError("Failed to relaunch with admin rights! Error code: %lu", err);
-		return;
-	}
-
-	wxLogInfo("Program relaunched with admin rights. Exiting current instance...");
-
-	// Umesto exit(0), koristi bezbedno zatvaranje:
-	if (mainFrame) {
-		mainFrame->Close(); // zatvori samo prozor
-	}
-	else {
-		wxTheApp->ExitMainLoop(); // sigurno zatvara aplikaciju
-	}
-}
-
-// Detect leftover registry keys
-// Pomocna funkcija za poredjenje stringova bez obzira na velika/mala slova
+// Helper function to match names in a case-insensitive manner
 bool ContainsIgnoreCase(const std::wstring& haystack, const std::wstring& needle) {
 	std::wstring h = haystack;
 	std::wstring n = needle;
@@ -119,9 +82,6 @@ bool ContainsIgnoreCase(const std::wstring& haystack, const std::wstring& needle
 	std::transform(n.begin(), n.end(), n.begin(), ::towlower);
 	return h.find(n) != std::wstring::npos;
 }
-
-
-
 
 // Cleanup leftovers 
 void CleanUpLeftovers(const std::string& programName, const wxString& regPath, std::function<void()> onFinished)
@@ -160,7 +120,7 @@ void CleanUpLeftovers(const std::string& programName, const wxString& regPath, s
 			L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
 		};
 
-		// Pretraga fajlova za brisanje
+		// Search for leftover files and folders
 		auto fileLeftovers = SearchLeftoverFiles(filePaths, programName);
 
 		for (const auto& filePath : fileLeftovers) {
@@ -170,17 +130,17 @@ void CleanUpLeftovers(const std::string& programName, const wxString& regPath, s
 			DeleteFileOrFolder(filePath);
 		}
 
-		// Pretraga registry kljuceva za brisanje
+		// Search for leftover registry keys
 		auto regLeftovers = SearchRegistryKeys(registrySearchPaths, regPath);
 
 		for (const auto& regKey : regLeftovers) {
 			wxTheApp->CallAfter([regKey]() {
 				wxLogMessage("Deleting leftover registry key: %s", wxString(regKey));
 			});
-			RegDeleteKeyRecursive(HKEY_LOCAL_MACHINE, regKey);
+			RegDeleteKeyRecursiveByPath(regKey);
 		}
 
-		// Pretraga i brisanje servisa/procesa
+		// Search for leftover services and processes
 		auto serviceLeftovers = SearchServicesAndProcesses(std::wstring(programName.begin(), programName.end()));
 
 		for (const auto& serviceName : serviceLeftovers) {
@@ -190,15 +150,16 @@ void CleanUpLeftovers(const std::string& programName, const wxString& regPath, s
 			StopAndDeleteService(serviceName);
 		}
 
-		// Uništi wxBusyInfo u glavnom thread-u
+		// Destroy wxBusyInfo object
 		wxTheApp->CallAfter([busy]() {
 			delete busy;
 		});
 
-		// Pozovi callback da javi da je gotovo
+		// Call the onFinished callback
 		wxTheApp->CallAfter([onFinished]() {
 			onFinished();
 		});
 
 	}).detach();
 }
+

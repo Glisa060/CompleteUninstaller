@@ -8,14 +8,12 @@
 #include <TlHelp32.h>
 #include "process_utils.h"
 
-
-
 // Detect services and processes
 std::vector<std::wstring> SearchServicesAndProcesses(const std::wstring& programName) {
 	wxBusyInfo info("Searching services and processes...");
 	std::vector<std::wstring> found;
 
-	// Traženje procesa
+	// Lokking for processes
 	HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if (hSnapshot != INVALID_HANDLE_VALUE) {
 		PROCESSENTRY32W pe;
@@ -33,7 +31,7 @@ std::vector<std::wstring> SearchServicesAndProcesses(const std::wstring& program
 		CloseHandle(hSnapshot);
 	}
 
-	// Trazenje servisa
+	// Looking for services
 	SC_HANDLE scmHandle = OpenSCManager(NULL, NULL, SC_MANAGER_ENUMERATE_SERVICE);
 	if (scmHandle) {
 		DWORD bytesNeeded, servicesReturned;
@@ -71,7 +69,7 @@ std::vector<std::wstring> SearchServicesAndProcesses(const std::wstring& program
 	return found;    
 }
 
-// Zaustavljanje i brisanje servisa
+// Stopping and deleting services
 bool StopAndDeleteService(const std::wstring& serviceName)
 {
 	SC_HANDLE scManager = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS);

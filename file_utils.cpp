@@ -1,4 +1,6 @@
 
+#include <wx/app.h>
+#include <wx/msgdlg.h>
 #include <wx/busyinfo.h>
 #include <wx/log.h>
 #include <wx/string.h>
@@ -8,52 +10,114 @@
 #include <vector>
 #include <exception>
 #include <filesystem>
+#include <set>
 #include <shlwapi.h>
 #include <ShlObj_core.h>
-
-
 
 #pragma comment(lib, "Shlwapi.lib")
 #include "file_utils.h"
 
 namespace fs = std::filesystem;
 
-
 // Detect leftover files
 std::vector<std::wstring> SearchLeftoverFiles(const std::vector<std::wstring>& paths, const std::string& programName) {
-	wxBusyInfo info("Searching for leftover files...");
-	std::vector<std::wstring> found;
-	std::wstring progNameW(programName.begin(), programName.end());
+    wxBusyInfo* info = new wxBusyInfo("Searching for leftover files...");
+    std::vector<std::wstring> found;
+    std::wstring progNameW(programName.begin(), programName.end());
+    bool permissionErrorShown = false;
 
-	for (const auto& basePath : paths) {
-		try {
-			if (!fs::exists(basePath) || !fs::is_directory(basePath))
-				continue;
+    static const std::set<std::wstring> skipFolders = {
+        L"System Volume Information",
+        L"$Recycle.Bin",
+        L"Config.Msi",
+        L"MSOCache",
+        L"Recovery",
+        L"WindowsApps",
+        L"ProgramData\\Microsoft\\Windows Defender"
+    };
 
-			for (const auto& entry : fs::recursive_directory_iterator(basePath)) {
-				if (entry.is_directory()) {
-					std::wstring folderName = entry.path().filename().wstring();
-					if (folderName.find(progNameW) != std::wstring::npos) {
-						found.push_back(entry.path().wstring());
-						wxLogInfo("Found folder: %s", wxString(entry.path().wstring()));
-					}
-				}
-				if (entry.is_regular_file()) {
-					std::wstring fileName = entry.path().filename().wstring();
-					if (fileName.find(progNameW) != std::wstring::npos) {
-						found.push_back(entry.path().wstring());
-						wxLogInfo("Found file: %s", wxString(entry.path().wstring()));
-					}
-				}
-			}
-		}
-		catch (const std::exception& e) {
-			wxLogError("Failed to search in path: %s | %s", wxString(basePath), e.what());
-		}
-	}
+    wxLogMessage("SearchLeftoverFiles started for program: %s", wxString(programName));
 
-	return found;
+    for (const auto& basePath : paths) {
+        wxLogMessage("Scanning base path: %s", wxString(basePath));
+
+        try {
+            if (!fs::exists(basePath)) {
+                wxLogWarning("Path does not exist: %s", wxString(basePath));
+                continue;
+            }
+            if (!fs::is_directory(basePath)) {
+                wxLogWarning("Not a directory: %s", wxString(basePath));
+                continue;
+            }
+
+            for (const auto& entry : fs::recursive_directory_iterator(basePath, fs::directory_options::skip_permission_denied)) {
+                try {
+                    const auto& entryPath = entry.path();
+                    const auto relPath = entryPath.lexically_relative(basePath).wstring();
+
+                    bool skip = false;
+                    for (const auto& folder : skipFolders) {
+                        if (relPath.find(folder) != std::wstring::npos || entryPath.filename().wstring() == folder) {
+                            wxLogDebug("Skipping known system folder: %s", wxString(entryPath.wstring()));
+                            skip = true;
+                            break;
+                        }
+                    }
+                    if (skip) continue;
+
+                    if (entry.is_directory()) {
+                        std::wstring folderName = entryPath.filename().wstring();
+                        wxLogDebug("Checking folder: %s", wxString(entryPath.wstring()));
+
+                        if (folderName.find(progNameW) != std::wstring::npos) {
+                            found.push_back(entryPath.wstring());
+                            wxLogInfo("Matched folder: %s", wxString(entryPath.wstring()));
+                        }
+                    }
+                    else if (entry.is_regular_file()) {
+                        std::wstring fileName = entryPath.filename().wstring();
+                        wxLogDebug("Checking file: %s", wxString(entryPath.wstring()));
+
+                        if (fileName.find(progNameW) != std::wstring::npos) {
+                            found.push_back(entryPath.wstring());
+                            wxLogInfo("Matched file: %s", wxString(entryPath.wstring()));
+                        }
+                    }
+                }
+                catch (const std::exception& inner) {
+                    wxLogError("Error processing entry: %s | %s", wxString(entry.path().wstring()), inner.what());
+                }
+            }
+        }
+        catch (const std::exception& e) {
+            wxLogError("Exception while processing base path: %s | %s", wxString(basePath), e.what());
+            if (!permissionErrorShown) {
+                permissionErrorShown = true;
+                wxTheApp->CallAfter([] {
+                    wxMessageBox(
+                        "Some folders could not be searched due to permission issues.\n"
+                        "Run the application as administrator.",
+                        "Permission Denied",
+                        wxICON_WARNING | wxOK
+                    );
+                });
+            }
+        }
+    }
+
+    wxLogMessage("SearchLeftoverFiles complete. %zu items found.", found.size());
+
+    // Must show messagebox in main thread
+    wxTheApp->CallAfter([info]() {
+        delete info;
+        wxMessageBox("File search completed.\nCheck logs for details.", "Search Complete", wxOK | wxICON_INFORMATION);
+    });
+
+    return found;
 }
+
+
 
 std::wstring GetKnownFolderPath(REFKNOWNFOLDERID folderId) {
 	PWSTR path = nullptr;
@@ -85,14 +149,14 @@ std::wstring GetProgramFilesX86Dir() {
 
 bool DeleteFileOrFolder(const std::wstring& path) {
 	if (PathIsDirectoryW(path.c_str())) {
-		// Folder - rekurzivno obriši sadržaj
+		// Folder - use recursive delete
 		WIN32_FIND_DATAW findFileData;
 		HANDLE hFind = INVALID_HANDLE_VALUE;
 		std::wstring spec = path + L"\\*";
 
 		hFind = FindFirstFileW(spec.c_str(), &findFileData);
 		if (hFind == INVALID_HANDLE_VALUE) {
-			// Folder je prazan ili greška
+			// Folder is empty or doesn't exist
 			return RemoveDirectoryW(path.c_str()) == TRUE;
 		}
 
@@ -104,7 +168,7 @@ bool DeleteFileOrFolder(const std::wstring& path) {
 			std::wstring fullSubPath = path + L"\\" + fileOrDir;
 
 			if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-				DeleteFileOrFolder(fullSubPath);  // rekurzivno obriši folder
+				DeleteFileOrFolder(fullSubPath);  // use recursive delete for subdirectory
 			}
 			else {
 				DeleteFileW(fullSubPath.c_str());
@@ -115,7 +179,7 @@ bool DeleteFileOrFolder(const std::wstring& path) {
 		return RemoveDirectoryW(path.c_str()) == TRUE;
 	}
 	else {
-		// Fajl
+		// File - delete directly
 		return DeleteFileW(path.c_str()) == TRUE;
 	}
 }

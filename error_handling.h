@@ -1,6 +1,5 @@
 #pragma once
-#include <wx/msw/dialog.h>
-#include <wx/window.h>
+#include <wx/dialog.h>
 #include <wx/string.h>
 
 class ErrorDialog : public wxDialog {

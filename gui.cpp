@@ -1,325 +1,373 @@
 #include <wx/app.h>
 #include <wx/busyinfo.h>
 #include <wx/filename.h>
+#include <wx/log.h>
+#include <wx/string.h>
 #include <wx/treectrl.h>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #include <shlobj.h>
+
 #include "ThreadedSearchHelper.h"
 #include "file_utils.h"
 #include "process_utils.h"
 #include "registry_utils.h"
 #include "gui.h"
 #include "util.h"
+#include "admin_utils.h"
 
 wxBEGIN_EVENT_TABLE(MyFrame, wxFrame)
 EVT_MENU(Minimal_Quit, MyFrame::OnQuit)
 EVT_MENU(Minimal_About, MyFrame::OnAbout)
 EVT_MENU(Minimal_Open, MyFrame::OnOpen)
 EVT_MENU(Minimal_Analyse, MyFrame::OnAnalyseMenu)
+EVT_MENU(RestartAsAdmin_ID, MyFrame::OnRestartAsAdmin)
 EVT_TREE_SEL_CHANGED(Run_Selected, MyFrame::OnTreeSelectionChanged)
 wxEND_EVENT_TABLE()
 
+wxIMPLEMENT_APP(MyApp);
 
-FILE* logFile = nullptr;
 std::map<wxString, wxString> installedPrograms;
 std::map<wxString, wxString> uninstallerPaths;
 std::map<wxString, wxString> registryPaths;
 std::string selectedUninstallerPath;
 
-wxIMPLEMENT_APP(MyApp);
+// === App lifecycle ===
 
-void MyFrame::OnQuit(wxCommandEvent& WXUNUSED(event))
-{
-	Close(true);
-}
-
-
-void MyFrame::OnAbout(wxCommandEvent& WXUNUSED(event))
-{
-	wxMessageBox(wxString::Format
-	(
-		"Welcome to Complete Uninstaller 0.1 alpha build!\n"
-		"\n"
-		"Complete uninstaller for Windows!\n"
-		"running under %s.",
-		wxGetLibraryVersionInfo().GetVersionString(),
-		wxGetOsDescription()
-	),
-		"About Complete Uninstaller",
-		wxOK | wxICON_INFORMATION,
-		this);
-}
-
-void MyFrame::OnOpen(wxCommandEvent& WXUNUSED(event)) {
-	if (selectedUninstallerPath.empty()) {
-		wxMessageBox("Please select a program from the tree to uninstall.",
-			"No Selection",
-			wxOK | wxICON_WARNING,
-			this);
-		return;
-	}
-
-	wxString command = wxString(selectedUninstallerPath).Trim(true).Trim(false);
-
-	if (command.StartsWith("MsiExec.exe")) {
-		wxLogMessage("Executing MSI uninstaller: %s", command);
-	}
-	else {
-		if (command.StartsWith("\"") && command.EndsWith("\"")) {
-			command = command.Mid(1, command.Length() - 2);
-		}
-
-		if (!wxFileExists(command)) {
-			wxMessageBox("The uninstaller path is invalid or does not exist.",
-				"Error",
-				wxOK | wxICON_ERROR,
-				this);
-			wxLogError("Uninstaller path does not exist: %s", command);
-			return;
-		}
-
-		wxLogMessage("Executing standard uninstaller: %s", command);
-	}
-
-	long result = wxExecute(command, wxEXEC_ASYNC);
-
-	if (result == -1) {
-		wxMessageBox("Failed to launch the uninstaller.",
-			"Error",
-			wxOK | wxICON_ERROR,
-			this);
-		wxLogError("Failed to execute: %s", command);
-	}
-	else {
-        wxFileName fileName(command.ToStdString()); // Explicitly convert wxString to std::string to avoid ambiguity
-		wxMessageBox("Uninstaller launched successfully.",
-			"Success",
-			wxOK | wxICON_INFORMATION,
-			this);
-
-		// Pripremi podatke za asinhroni cleanup
-		std::string folderNameStr;
-		{
-			wxFileName fileName(command);
-			wxString folderName = fileName.GetDirs().Last();
-			folderNameStr = folderName.ToStdString();
-			wxLogInfo("Name that is passed: %s", folderName);
-		}
-
-		// regPath ti treba da bude validan registar path, ne ceo command string.
-		// Ovde pretpostavljam da imaš spremljeno u mapu recimo ili mozes koristiti selected program name
-		// Zameni ovo sa stvarnim registry pathom
-		std::string regPath = GetRegistryPathForProgram(folderNameStr);
-
-		// Pozovi asinhroni cleanup
-		CleanUpLeftovers(folderNameStr, wxString(regPath), [this]() {
-			wxMessageBox("Cleanup finished.", "Done", wxICON_INFORMATION, this);
-			// Eventualno refresuj UI ili prikazi rezultate
-		});
-	}
-}
-
-
-bool MyApp::OnInit()
-{
+bool MyApp::OnInit() {
 	if (!wxApp::OnInit())
 		return false;
 
 	logFile = fopen("logfile.txt", "w");
-
-	if (logFile == nullptr) {
+	if (!logFile) {
 		wxLogError("Failed to open log file!");
 		return false;
 	}
 
 	wxLog::SetActiveTarget(new wxLogStderr(logFile, wxConvUTF8));
-	MyFrame* frame = new MyFrame("Complete Uninstaller 0.1 alpha");
 
+	if (!IsRunningAsAdmin()) {
+		wxLogWarning("Not running as administrator.");
+		if (RestartAsAdmin()) {
+			wxLogMessage("Launched elevated instance. Exiting current instance.");
+			return false; // Terminate this instance
+		}
+		else {
+			wxMessageBox("The application must be run as administrator.", "Error", wxICON_ERROR);
+			return false;
+		}
+	}
+
+	wxLogMessage("App started running as administrator.");
+
+	auto* frame = new MyFrame("Complete Uninstaller 0.1 alpha");
 	frame->Show(true);
-
 	return true;
 }
 
-void MyFrame::PopulateTreeView() {
-	if (installedPrograms.empty()) {
-		wxLogError("No programs found to display in the tree.");
+int MyApp::OnExit() {
+	if (logFile) {
+		fclose(logFile);
+		logFile = nullptr;
+	}
+	return 0;
+}
+
+// === Event handlers ===
+
+void MyFrame::OnQuit(wxCommandEvent&) {
+	Close(true);
+}
+
+void MyFrame::OnAbout(wxCommandEvent&) {
+	wxMessageBox(wxString::Format(
+		"Complete Uninstaller 0.1 alpha build\n"
+		"For Windows\n"
+		"Using wxWidgets %s\n%s",
+		wxGetLibraryVersionInfo().GetVersionString(),
+		wxGetOsDescription()),
+		"About", wxOK | wxICON_INFORMATION, this);
+}
+
+void MyFrame::OnOpen(wxCommandEvent&) {
+	auto selected = treeCtrl->GetSelection();
+	if (!selected.IsOk()) {
+		wxMessageBox("Select a program to uninstall.", "No Selection", wxOK | wxICON_WARNING, this);
 		return;
 	}
 
+	auto programName = treeCtrl->GetItemText(selected).ToStdString();
+	auto it = uninstallerPaths.find(programName);
+	if (it == uninstallerPaths.end()) {
+		wxMessageBox("Uninstaller path not found.", "Error", wxICON_ERROR);
+		return;
+	}
+
+	wxString command = wxString(it->second).Trim(true).Trim(false);
+	if (!command.StartsWith("MsiExec.exe") && !wxFileExists(command)) {
+		wxMessageBox("Invalid or missing uninstaller file.", "Error", wxICON_ERROR);
+		return;
+	}
+
+	long result = wxExecute(command, wxEXEC_ASYNC);
+	if (result == -1) {
+		wxMessageBox("Failed to launch uninstaller.", "Error", wxOK | wxICON_ERROR);
+		return;
+	}
+
+	wxMessageBox("Uninstaller launched.", "Success", wxOK | wxICON_INFORMATION);
+	OnProgramListUpdated();
+
+	wxString folderName = wxFileName(command).GetDirs().Last();
+	CleanUpLeftovers(folderName.ToStdString(), GetRegistryPathForProgram(folderName.ToStdString()), [this]() {
+		wxMessageBox("Cleanup finished.", "Done", wxICON_INFORMATION, this);
+	});
+}
+
+void MyFrame::OnTreeSelectionChanged(wxTreeEvent& event) {
+	auto selected = event.GetItem();
+	if (!selected.IsOk()) return;
+
+	wxString name = treeCtrl->GetItemText(selected);
+	auto it = uninstallerPaths.find(name.ToStdString());
+
+	if (it != uninstallerPaths.end()) {
+		selectedUninstallerPath = it->second;
+		SetStatusText(wxString::Format("Uninstaller: %s", selectedUninstallerPath), 1);
+	}
+	else {
+		SetStatusText("Uninstaller: <not found>", 1);
+		selectedUninstallerPath.clear();
+	}
+}
+
+void MyFrame::OnAnalyseMenu(wxCommandEvent&)
+{
+	if (!IsRunningAsAdmin()) {
+		int res = wxMessageBox(
+			"This action requires administrator rights to scan all folders and registry entries.\n\n"
+			"Do you want to restart the application with elevated privileges?",
+			"Administrator Access Required",
+			wxICON_QUESTION | wxYES_NO
+		);
+
+		if (res == wxYES) {
+			if (RestartAsAdmin()) {
+				Close(); // Optional: close current instance
+			}
+		}
+
+		return;
+	}
+
+	auto selected = treeCtrl->GetSelection();
+	if (!selected.IsOk()) {
+		wxMessageBox("Select a program to analyse.", "No Selection", wxICON_INFORMATION);
+		return;
+	}
+
+	auto name = treeCtrl->GetItemText(selected).ToStdString();
+
+	// Get uninstall string from map (or registry)
+	wxString uninstallStr = uninstallerPaths.contains(name) ? uninstallerPaths[name] : wxString("Uninstall string not found.");
+
+	std::vector<std::wstring> regVec = { std::wstring(registryPaths[name].begin(), registryPaths[name].end()) };
+	wxBusyInfo busy("Analysing leftovers...", this);
+
+	RunInBackground<std::vector<std::wstring>>([name, regVec]() {
+		try {
+			std::vector<std::wstring> filePaths = {
+				GetProgramFilesDir(), GetProgramFilesX86Dir(),
+				GetKnownFolderPath(FOLDERID_LocalAppData),
+				GetKnownFolderPath(FOLDERID_RoamingAppData),
+				GetKnownFolderPath(FOLDERID_ProgramData)
+			};
+
+			auto files = SearchLeftoverFiles(filePaths, name);
+			auto reg = SearchRegistryKeys(regVec, wxString(name));
+			auto svc = SearchServicesAndProcesses(std::wstring(name.begin(), name.end()));
+
+			std::vector<std::wstring> all(files);
+			all.insert(all.end(), reg.begin(), reg.end());
+			all.insert(all.end(), svc.begin(), svc.end());
+			return all;
+		}
+		catch (const std::exception& e) {
+			wxLogError("Exception in background search: %s", e.what());
+			wxTheApp->CallAfter([=]() {
+				wxMessageBox("Error during background search.\nCheck logs for details.", "Search Error", wxICON_ERROR);
+			});
+			return std::vector<std::wstring>{};
+		}
+	}, [this, uninstallStr](std::vector<std::wstring> leftovers) {
+		try {
+			wxTheApp->CallAfter([this, uninstallStr]() {
+				DisplayUninstallString(uninstallStr);
+			});
+			wxTheApp->CallAfter([this, leftovers]() {
+				if (leftovers.empty()) {
+					wxMessageBox("No leftovers found.", "Clean", wxICON_INFORMATION);
+				}
+				else {
+					DisplayLeftovers(leftovers);
+				}
+			});
+		}
+		catch (const std::exception& e) {
+			wxLogError("Exception in result callback: %s", e.what());
+			wxMessageBox("A crash occurred while displaying results.\nCheck logs.", "Error", wxICON_ERROR);
+		}
+		catch (...) {
+			wxLogError("Unknown crash in result callback.");
+			wxMessageBox("An unknown crash occurred after search completed.", "Error", wxICON_ERROR);
+		}
+	}
+		);
+
+}
+
+// === UI helpers ===
+
+void MyFrame::PopulateTreeView() {
 	treeCtrl->DeleteAllItems();
-	wxTreeItemId root = treeCtrl->AddRoot("Installed Programs");
 
-	wxTreeItemId userNode = treeCtrl->AppendItem(root, "[User] Installed");
-	wxTreeItemId sys32Node = treeCtrl->AppendItem(root, "[32-bit] System");
-	wxTreeItemId sys64Node = treeCtrl->AppendItem(root, "[64-bit] System");
+	auto root = treeCtrl->AddRoot("Installed Programs");
+	auto userNode = treeCtrl->AppendItem(root, "[User] Installed");
+	auto sys32Node = treeCtrl->AppendItem(root, "[32-bit] System");
+	auto sys64Node = treeCtrl->AppendItem(root, "[64-bit] System");
 
-	for (const auto& [programName, uninstallPath] : installedPrograms) {
-		std::string key = uninstallPath.ToStdString();
+	for (const auto& [name, path] : installedPrograms) {
+		auto key = path.ToStdString();
+		wxTreeItemId* node = &sys64Node;
 
-		wxTreeItemId* targetNode = &sys64Node; // podrazumevano
+		if (key.find("WOW6432Node") != std::string::npos) node = &sys32Node;
+		else if (key.find("HKEY_CURRENT_USER") != std::string::npos || key.find("HKCU") != std::string::npos) node = &userNode;
 
-		if (key.find("WOW6432Node") != std::string::npos) {
-			targetNode = &sys32Node;
-		}
-		else if (key.find("HKEY_CURRENT_USER") != std::string::npos || key.find("HKCU") != std::string::npos) {
-			targetNode = &userNode;
-		}
-
-		wxTreeItemId item = treeCtrl->AppendItem(*targetNode, programName);
-		uninstallerPaths[programName.ToStdString()] = uninstallPath.ToStdString();
+		treeCtrl->AppendItem(*node, name);
+		uninstallerPaths[name.ToStdString()] = path.ToStdString();
 	}
 
 	treeCtrl->ExpandAll();
 }
 
-void MyFrame::OnTreeSelectionChanged(wxTreeEvent& event) {
-	wxTreeItemId selected = event.GetItem();
-	if (selected.IsOk()) {
-		wxString programName = treeCtrl->GetItemText(selected);
-		wxLogMessage("Selected program: %s", programName);
+void MyFrame::OnProgramListUpdated() {
+	auto* info = new wxBusyInfo("Loading installed programs...");
 
-		auto it = uninstallerPaths.find(programName.ToStdString());
-		if (it != uninstallerPaths.end()) {
-			selectedUninstallerPath = it->second;
-			wxLogMessage("Uninstaller path found: %s", selectedUninstallerPath);
-			SetStatusText(wxString::Format("Uninstaller: %s", selectedUninstallerPath), 1);
-		}
-		else {
-			wxLogError("Uninstaller path not found for program: %s", programName);
-			SetStatusText("Uninstaller: <not found>", 1);
-			selectedUninstallerPath.clear();
-		}
-	}
+	std::thread([this, info]() {
+		std::map<wxString, wxString> programs;
+		GetInstalledPrograms(programs);
+
+		wxTheApp->CallAfter([this, programs = std::move(programs), info]() {
+			delete info;
+			installedPrograms = std::move(programs);
+			PopulateTreeView();
+		});
+	}).detach();
 }
 
 void MyFrame::DisplayLeftovers(const std::vector<std::wstring>& leftovers) {
 	leftoverTreeCtrl->DeleteAllItems();
-	wxTreeItemId root = leftoverTreeCtrl->AddRoot("Detected Leftovers");
+	auto root = leftoverTreeCtrl->AddRoot("Detected Leftovers");
 
-	for (const auto& leftover : leftovers) {
-		leftoverTreeCtrl->AppendItem(root, wxString(leftover));
+	for (const auto& item : leftovers) {
+		leftoverTreeCtrl->AppendItem(root, wxString(item));
 	}
 
 	leftoverTreeCtrl->ExpandAll();
 }
 
-void MyFrame::OnAnalyseMenu(wxCommandEvent& event)
+std::string MyFrame::GetRegistryPathForProgram(const std::string& name) {
+	auto it = registryPaths.find(name);
+	return (it != registryPaths.end()) ? std::string(it->second.mb_str()) : std::string();
+}
+
+// Display uninstall string (clears and shows new string)
+void MyFrame::DisplayUninstallString(const wxString& uninstallStr)
 {
-	wxTreeItemId selected = treeCtrl->GetSelection();
-
-	if (!selected.IsOk()) {
-		wxMessageBox("Please select a program from the tree to analyse.", "No Selection", wxICON_INFORMATION);
+	if (!uninstallListCtrl)
+	{
+		wxLogWarning("uninstallListCtrl is null.");
 		return;
 	}
 
-	wxString programNameWx = treeCtrl->GetItemText(selected);
-	std::string programName = programNameWx.ToStdString();
+	uninstallString = uninstallStr;
 
-	auto uninstallIt = uninstallerPaths.find(programName);
-	if (uninstallIt == uninstallerPaths.end()) {
-		wxMessageBox("Uninstaller path not found for the selected program.", "Error", wxICON_ERROR);
+	uninstallListCtrl->DeleteAllItems();
+	uninstallListCtrl->InsertItem(0, uninstallStr);
+}
+
+// Display leftover items
+void MyFrame::DisplayProgramDetails(const std::vector<std::wstring>& leftoverItems)
+{
+	leftovers = leftoverItems;
+
+	leftoversListCtrl->DeleteAllItems();
+	for (size_t i = 0; i < leftoverItems.size(); ++i) {
+		wxString item(leftoverItems[i].c_str());
+		leftoversListCtrl->InsertItem(i, item);
+	}
+}
+
+void MyFrame::OnDeleteSelected(wxCommandEvent&)
+{
+	long itemIndex = -1;
+	std::vector<std::wstring> toDelete;
+
+	// Collect selected leftovers to delete
+	while ((itemIndex = leftoversListCtrl->GetNextItem(itemIndex, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED)) != wxNOT_FOUND) {
+		wxString wxItemText = leftoversListCtrl->GetItemText(itemIndex);
+		std::wstring itemText(wxItemText.begin(), wxItemText.end());
+		toDelete.push_back(itemText);
+	}
+
+	if (toDelete.empty()) {
+		wxMessageBox("No leftovers selected for deletion.", "Info", wxICON_INFORMATION);
 		return;
 	}
 
-	auto regIt = registryPaths.find(programName);
-	if (regIt == registryPaths.end()) {
-		wxMessageBox("Registry path not found for selected program.", "Error", wxICON_ERROR);
+	if (wxMessageBox("Are you sure you want to delete the selected leftovers?", "Confirm Deletion", wxYES_NO | wxICON_QUESTION) != wxYES) {
 		return;
 	}
 
-	// Pravimo vektor registry putanja sa jednim elementom iz regIt->second
-	std::vector<std::wstring> registryPathsVec = { std::wstring(regIt->second.begin(), regIt->second.end()) };
-
-	// Prikazujemo busy info tokom analize
-	wxBusyInfo busy("Analysing leftovers, please wait...", this);
-
-	RunInBackground<std::vector<std::wstring>>(
-		[programName, registryPathsVec]() {
-		// Ovo se izvršava u worker thread-u
-		std::vector<std::wstring> filePaths = {
-			GetProgramFilesDir(),
-			GetProgramFilesX86Dir(),
-			GetKnownFolderPath(FOLDERID_LocalAppData),
-			GetKnownFolderPath(FOLDERID_RoamingAppData),
-			GetKnownFolderPath(FOLDERID_ProgramData)
-		};
-
-		// Traži fajlove leftover-e
-		auto leftoverFiles = SearchLeftoverFiles(filePaths, programName);
-
-		// Traži registry leftover-e
-		auto leftoverRegistry = SearchRegistryKeys(registryPathsVec, wxString(programName));
-
-		// Traži servise i procese
-		auto leftoverServices = SearchServicesAndProcesses(std::wstring(programName.begin(), programName.end()));
-
-		// Spoji sve rezultate u jedan vektor
-		std::vector<std::wstring> allLeftovers;
-		allLeftovers.reserve(leftoverFiles.size() + leftoverRegistry.size() + leftoverServices.size());
-		allLeftovers.insert(allLeftovers.end(), leftoverFiles.begin(), leftoverFiles.end());
-		allLeftovers.insert(allLeftovers.end(), leftoverRegistry.begin(), leftoverRegistry.end());
-		allLeftovers.insert(allLeftovers.end(), leftoverServices.begin(), leftoverServices.end());
-
-		return allLeftovers;
-	},
-		[this](std::vector<std::wstring> leftovers) {
-		// Ovo se izvršava u glavnom thread-u (GUI)
-		if (leftovers.empty()) {
-			wxMessageBox("No leftover files, registry entries or services found.", "Clean", wxICON_INFORMATION);
+	for (const auto& leftover : toDelete) {
+		// Determine if leftover is a registry key or a file path, then delete accordingly
+		if (leftover.find(L"HKLM\\") == 0 || leftover.find(L"HKCU\\") == 0) {
+			// It's a registry key - delete recursively
+			LONG res = RegDeleteKeyRecursiveByPath(leftover);
+			if (res == ERROR_SUCCESS) {
+				wxLogMessage("Deleted registry key: %s", wxString(leftover));
+			}
+			else {
+				wxLogWarning("Failed to delete registry key: %s", wxString(leftover));
+			}
 		}
 		else {
-			DisplayLeftovers(leftovers);
+			// Assume it's a file or folder path
+			if (DeleteFileOrFolder(leftover)) {
+				wxLogMessage("Deleted file/folder: %s", wxString(leftover));
+			}
+			else {
+				wxLogWarning("Failed to delete file/folder: %s", wxString(leftover));
+			}
 		}
 	}
-	);
+
+	// Refresh leftover list to remove deleted items
+	wxMessageBox("Deletion complete. Refreshing leftovers list...", "Info", wxICON_INFORMATION);
+
+	// You might want to rerun analysis here or remove items from the UI
+	// For now, just clear selected items:
+	DisplayLeftovers({});  // Clear list
 }
 
-
-void MyFrame::OnProgramListReady(std::map<wxString, wxString> programs)
-{
-	installedPrograms = std::move(programs);
-
-	wxTreeItemId rootId = treeCtrl->AddRoot("Installed Programs");
-
-	for (const auto& [name, path] : installedPrograms) {
-		treeCtrl->AppendItem(rootId, name);
-	}
-
-	treeCtrl->Expand(rootId);
-}
-
-void MyFrame::OnProgramListUpdated()
-{
-	wxBusyInfo* info = new wxBusyInfo("Loading installed programs...");
-
-	std::thread([this, info]() {
-		std::map<wxString, wxString> programs;
-		GetInstalledPrograms(programs);  // Ova funkcija ne sme koristiti GUI direktno!
-
-		// Update GUI u glavnom threadu
-		wxTheApp->CallAfter([this, programs = std::move(programs), info]() {
-			delete info; // sakrij "busy" indikator
-			OnProgramListReady(programs);
-		});
-
-	}).detach(); // pozadinski thread
-}
-
-std::string MyFrame::GetRegistryPathForProgram(const std::string& programName) {
-	auto it = registryPaths.find(programName);
-	if (it != registryPaths.end()) {
-		return std::string(it->second.mb_str());
+void MyFrame::OnRestartAsAdmin(wxCommandEvent&) {
+	if (!IsRunningAsAdmin()) {
+		if (RestartAsAdmin()) {
+			Close();  // Exit current non-admin instance
+		}
 	}
 	else {
-		wxLogWarning("Registry path not found for program: %s", programName);
-		return std::string();  // prazan string
+		wxLogMessage("Restarted the as administrator.");
 	}
-}
-
-int MyApp::OnExit() {
-	if (logFile) {
-		fclose(logFile); // ako koristiš log fajl
-		logFile = nullptr;
-	}
-	return 0;
 }
 

@@ -7,5 +7,4 @@
 
 
 void GetInstalledPrograms(std::map<wxString, wxString>& programs);
-void runAsAdmin(wxFrame* mainFrame = nullptr);
 void CleanUpLeftovers(const std::string& programName, const wxString& regPath, std::function<void()> onFinished);
