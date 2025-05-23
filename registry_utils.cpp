@@ -3,8 +3,6 @@
 #include <algorithm>
 #include "registry_utils.h"
 
-
-
 // Helper function to get root HKEY and subkey path from a full registry path string.
 // Supports prefixes like "HKLM\", "HKEY_LOCAL_MACHINE\", "HKCU\", "HKEY_CURRENT_USER\".
 static HKEY GetRootKeyFromString(const std::wstring& fullKeyPath, std::wstring& subKeyOut) {
@@ -134,4 +132,72 @@ std::vector<std::wstring> SearchRegistryKeys(const std::vector<std::wstring>& re
     }
 
     return foundKeys;
+}
+void ReadProgramsFromRegistry(HKEY root, const std::string& path,
+    std::map<wxString, wxString>& programs,
+    std::map<wxString, wxString>& manufacturers)
+{
+    HKEY hKey;
+    if (RegOpenKeyExA(root, path.c_str(), 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
+        return;
+    }
+
+    char subKeyName[256];
+    DWORD subKeyNameSize;
+    DWORD index = 0;
+
+    while (true) {
+        subKeyNameSize = sizeof(subKeyName);
+        if (RegEnumKeyExA(hKey, index++, subKeyName, &subKeyNameSize, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS)
+            break;
+
+        HKEY subKey;
+        if (RegOpenKeyExA(hKey, subKeyName, 0, KEY_READ, &subKey) == ERROR_SUCCESS) {
+            char displayName[256] = { 0 }, uninstallString[512] = { 0 }, publisher[256] = { 0 };
+            DWORD size;
+
+            size = sizeof(displayName);
+            if (RegQueryValueExA(subKey, "DisplayName", nullptr, nullptr, (LPBYTE)displayName, &size) == ERROR_SUCCESS) {
+                size = sizeof(uninstallString);
+                RegQueryValueExA(subKey, "UninstallString", nullptr, nullptr, (LPBYTE)uninstallString, &size);
+
+                size = sizeof(publisher);
+                RegQueryValueExA(subKey, "Publisher", nullptr, nullptr, (LPBYTE)publisher, &size);
+
+                wxString name = wxString::FromUTF8(displayName);
+                wxString uninstall = wxString::FromUTF8(uninstallString);
+                wxString mfg = wxString::FromUTF8(publisher);
+
+                // add full regPath including (etc. WOW6432Node...)
+                wxString fullRegPath = wxString::Format("HKEY_%s\\%s\\%s",
+                    (root == HKEY_LOCAL_MACHINE ? "LOCAL_MACHINE" : "CURRENT_USER"),
+                    wxString(path),
+                    wxString::FromUTF8(subKeyName));
+
+                if (!name.IsEmpty()) {
+                    programs[name] = fullRegPath;
+                    if (!mfg.IsEmpty()) {
+                        manufacturers[name] = mfg;
+                    }
+                }
+            }
+
+            RegCloseKey(subKey);
+        }
+    }
+
+    RegCloseKey(hKey);
+}
+
+
+
+std::string GetRegistryPathForProgram(const std::string& name) {
+    auto it = registryPaths.find(name);
+    return (it != registryPaths.end()) ? std::string(it->second.mb_str()) : std::string();
+}
+
+void GetInstalledPrograms(std::map<wxString, wxString>& programs, std::map<wxString, wxString>& manufacturers) {
+    ReadProgramsFromRegistry(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall", programs, manufacturers);
+    ReadProgramsFromRegistry(HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall", programs, manufacturers);
+    ReadProgramsFromRegistry(HKEY_CURRENT_USER, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall", programs, manufacturers);
 }

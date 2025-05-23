@@ -4,7 +4,6 @@
 #include <wx/listctrl.h>
 #include <map>
 
-
 class MyApp : public wxApp  
 {  
 public:  
@@ -22,23 +21,21 @@ public:
 private:  
     wxTreeCtrl* treeCtrl;  
     wxTreeCtrl* leftoverTreeCtrl; // Leftover files tree view  
-
-    wxListCtrl* uninstallListCtrl = nullptr; // To show uninstall string(s)
     wxListCtrl* leftoversListCtrl;  // To show leftover files/registry keys/services
+    wxString currentTheme;
+    // Icons
+    wxImageList* imageList;
+    std::map<wxString, wxString> manufacturers;
+
+
 
     // Data
     wxString uninstallString;
     std::vector<std::wstring> leftovers;
 
-    void DisplayUninstallString(const wxString& uninstallStr);
     void DisplayProgramDetails(const std::vector<std::wstring>& leftoverItems);
     void OnRestartAsAdmin(wxCommandEvent&);
-    void OnDeleteSelected(wxCommandEvent& event);
-
-    // Button to delete selected leftovers
-    wxButton* deleteButton;
-
-    std::string GetRegistryPathForProgram(const std::string& programName);  
+    void OnDeleteSelected(wxCommandEvent& event);  
 
     wxDECLARE_EVENT_TABLE();  
 
@@ -46,19 +43,16 @@ private:
     void OnAbout(wxCommandEvent& event);  
     void OnOpen(wxCommandEvent& event);  
 
+    void OnThemeSelect(wxCommandEvent& event);
+    void ApplyTheme(const wxString& theme);
+    void LoadTheme();
+
     void OnTreeSelectionChanged(wxTreeEvent& event);  
     void PopulateTreeView();  
     void OnProgramListUpdated();  
     void DisplayLeftovers(const std::vector<std::wstring>& leftovers);  
     void OnAnalyseMenu(wxCommandEvent& event);  
-};  
-
-enum  
-{  
-    Minimal_Quit = wxID_EXIT,  
-    Minimal_About = wxID_ABOUT,  
-    Minimal_Open = wxID_OPEN,  
-    Run_Selected = wxID_ANY + 1,  
-    Minimal_Analyse, 
-    RestartAsAdmin_ID
 };
+
+
+

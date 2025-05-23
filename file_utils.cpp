@@ -108,10 +108,12 @@ std::vector<std::wstring> SearchLeftoverFiles(const std::vector<std::wstring>& p
 
     wxLogMessage("SearchLeftoverFiles complete. %zu items found.", found.size());
 
+    size_t foundCount = found.size();
+
     // Must show messagebox in main thread
-    wxTheApp->CallAfter([info]() {
+    wxTheApp->CallAfter([info, foundCount]() {
         delete info;
-        wxMessageBox("File search completed.\nCheck logs for details.", "Search Complete", wxOK | wxICON_INFORMATION);
+        wxMessageBox("File search completed.\n" + std::to_string(foundCount) + " items found.", "Search Complete", wxOK | wxICON_INFORMATION);
     });
 
     return found;

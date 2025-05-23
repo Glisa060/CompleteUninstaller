@@ -5,32 +5,17 @@
 #include "gui.h"
 #include "util.h"
 #include "admin_utils.h"
-
+#include "enums.h"
 MyFrame::MyFrame(const wxString& title)
     : wxFrame(NULL, wxID_ANY, title, wxDefaultPosition, wxSize(600, 400))
 {
-    if (IsRunningAsAdmin()) {
+    if (IsRunningAsAdmin())
         SetTitle("Complete Uninstaller (Admin)");
-    }
-    else {
+    else
         SetTitle("Complete Uninstaller");
-    }
+
     wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
 
-    // Create the uninstall string list control and add it to the sizer
-    uninstallListCtrl = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, wxSize(-1, 50), wxLC_REPORT);
-
-	// Calculate the width for the column
-    wxSize size = GetClientSize();
-    int halfWidth = size.GetWidth() / 2;
-
-	// Add columns to the uninstallListCtrl
-    uninstallListCtrl->InsertColumn(0, "Uninstall String",0, halfWidth);
-
-    // Add the uninstallListCtrl at the top
-    sizer->Add(uninstallListCtrl, 0, wxEXPAND | wxALL, 5);
-
-    // Create the splitter and add tree controls
     wxSplitterWindow* splitter = new wxSplitterWindow(this, wxID_ANY);
     treeCtrl = new wxTreeCtrl(splitter, wxID_ANY, wxDefaultPosition, wxDefaultSize,
         wxTR_HAS_BUTTONS | wxTR_LINES_AT_ROOT);
@@ -38,40 +23,49 @@ MyFrame::MyFrame(const wxString& title)
         wxTR_HAS_BUTTONS | wxTR_LINES_AT_ROOT);
     splitter->SplitVertically(treeCtrl, leftoverTreeCtrl);
 
-    // Set initial sash position
-    splitter->SetSashPosition(halfWidth);
+    wxSize size = GetClientSize();
+    splitter->SetSashPosition(size.GetWidth() / 2);
 
-    // Add splitter to the main sizer
     sizer->Add(splitter, 1, wxEXPAND | wxALL, 5);
 
-    // Apply sizer
+    // Image list & icons
+    imageList = new wxImageList(16, 16, true);
+    imageList->Add(wxIcon("Icons/tree_root.png", wxBITMAP_TYPE_PNG));   // ID 0
+    imageList->Add(wxIcon("Icons/user_icon.png", wxBITMAP_TYPE_PNG));   // ID 1
+    imageList->Add(wxIcon("Icons/sys32_icon.png", wxBITMAP_TYPE_PNG));  // ID 2
+    imageList->Add(wxIcon("Icons/sys64_icon.png", wxBITMAP_TYPE_PNG));  // ID 3
+    imageList->Add(wxIcon("Icons/delete.png", wxBITMAP_TYPE_PNG));      // ID 4
+
+    treeCtrl->AssignImageList(imageList);
+
     SetSizer(sizer);
     Layout();
 
     runAsAdmin(this);
     OnProgramListUpdated();
 
-    // Menu setup
+    // Menu
     wxMenu* fileMenu = new wxMenu;
     wxMenu* helpMenu = new wxMenu;
+    wxMenu* themeMenu = new wxMenu;
 
     helpMenu->Append(Minimal_About, "&About\tF1", "Show about dialog");
     fileMenu->Append(Minimal_Open, "&Run selected\tAlt-O", "Run the uninstaller for the selected item");
     fileMenu->Append(Minimal_Analyse, "&Analyse selected\tAlt-A", "Analyse leftovers of the selected program");
     fileMenu->Append(Minimal_Quit, "E&xit\tAlt-X", "Quit this program");
     fileMenu->Append(RestartAsAdmin_ID, "Restart as Admin\tCtrl+R", "Restart the app with admin privileges");
- 
+    themeMenu->AppendRadioItem(Theme_Light, "Light Theme");
+    themeMenu->AppendRadioItem(Theme_Dark, "Dark Theme");
+
     wxMenuBar* menuBar = new wxMenuBar();
     menuBar->Append(fileMenu, "&File");
+    menuBar->Append(themeMenu, "&Theme");
     menuBar->Append(helpMenu, "&Help");
+
     SetMenuBar(menuBar);
     CreateStatusBar(2);
     SetStatusText("Complete Uninstaller 0.1 alpha!");
 }
-
-
-
-
 
 
 

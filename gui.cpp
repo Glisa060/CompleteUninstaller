@@ -4,10 +4,12 @@
 #include <wx/log.h>
 #include <wx/string.h>
 #include <wx/treectrl.h>
+#include <wx/sysopt.h> // Add this include to resolve wxSystemOptions
+#include <wx/config.h>
+#include <wx/fileconf.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shlobj.h>
-
 #include "ThreadedSearchHelper.h"
 #include "file_utils.h"
 #include "process_utils.h"
@@ -15,6 +17,8 @@
 #include "gui.h"
 #include "util.h"
 #include "admin_utils.h"
+#include "enums.h"
+
 
 wxBEGIN_EVENT_TABLE(MyFrame, wxFrame)
 EVT_MENU(Minimal_Quit, MyFrame::OnQuit)
@@ -22,6 +26,8 @@ EVT_MENU(Minimal_About, MyFrame::OnAbout)
 EVT_MENU(Minimal_Open, MyFrame::OnOpen)
 EVT_MENU(Minimal_Analyse, MyFrame::OnAnalyseMenu)
 EVT_MENU(RestartAsAdmin_ID, MyFrame::OnRestartAsAdmin)
+EVT_MENU(Theme_Light, MyFrame::OnThemeSelect)
+EVT_MENU(Theme_Dark, MyFrame::OnThemeSelect)
 EVT_TREE_SEL_CHANGED(Run_Selected, MyFrame::OnTreeSelectionChanged)
 wxEND_EVENT_TABLE()
 
@@ -58,10 +64,11 @@ bool MyApp::OnInit() {
 		}
 	}
 
-	wxLogMessage("App started running as administrator.");
+	wxLogMessage("OnInit method Log: App started running as administrator.");
 
 	auto* frame = new MyFrame("Complete Uninstaller 0.1 alpha");
 	frame->Show(true);
+	wxSystemOptions::SetOption("msw.dark-mode", 1);
 	return true;
 }
 
@@ -195,14 +202,14 @@ void MyFrame::OnAnalyseMenu(wxCommandEvent&)
 		catch (const std::exception& e) {
 			wxLogError("Exception in background search: %s", e.what());
 			wxTheApp->CallAfter([=]() {
-				wxMessageBox("Error during background search.\nCheck logs for details.", "Search Error", wxICON_ERROR);
+				wxLogError("Error during background search.\nCheck logs for details.");
 			});
 			return std::vector<std::wstring>{};
 		}
 	}, [this, uninstallStr](std::vector<std::wstring> leftovers) {
 		try {
 			wxTheApp->CallAfter([this, uninstallStr]() {
-				DisplayUninstallString(uninstallStr);
+				wxLogMessage("Uninstall string: %s", uninstallStr);
 			});
 			wxTheApp->CallAfter([this, leftovers]() {
 				if (leftovers.empty()) {
@@ -231,20 +238,25 @@ void MyFrame::OnAnalyseMenu(wxCommandEvent&)
 void MyFrame::PopulateTreeView() {
 	treeCtrl->DeleteAllItems();
 
-	auto root = treeCtrl->AddRoot("Installed Programs");
-	auto userNode = treeCtrl->AppendItem(root, "[User] Installed");
-	auto sys32Node = treeCtrl->AppendItem(root, "[32-bit] System");
-	auto sys64Node = treeCtrl->AppendItem(root, "[64-bit] System");
+	auto root = treeCtrl->AddRoot("Installed Programs", 0);  // Ikonica ID 0
+	auto userNode = treeCtrl->AppendItem(root, "[User] Installed", 1);    // Ikonica ID 1
+	auto sys32Node = treeCtrl->AppendItem(root, "[32-bit] System", 2);   // Ikonica ID 2
+	auto sys64Node = treeCtrl->AppendItem(root, "[64-bit] System", 3);   // Ikonica ID 3
 
-	for (const auto& [name, path] : installedPrograms) {
-		auto key = path.ToStdString();
+	for (const auto& [name, regPath] : installedPrograms) {
+		std::string key = regPath.ToStdString();
 		wxTreeItemId* node = &sys64Node;
 
-		if (key.find("WOW6432Node") != std::string::npos) node = &sys32Node;
-		else if (key.find("HKEY_CURRENT_USER") != std::string::npos || key.find("HKCU") != std::string::npos) node = &userNode;
+		if (key.find("WOW6432Node") != std::string::npos)
+			node = &sys32Node;
+		else if (key.find("HKEY_CURRENT_USER") != std::string::npos || key.find("HKCU") != std::string::npos)
+			node = &userNode;
+		else if (key.find("CurrentUser") != std::string::npos)
+			node = &userNode;
 
-		treeCtrl->AppendItem(*node, name);
-		uninstallerPaths[name.ToStdString()] = path.ToStdString();
+		// Dodaj ikonicu programa (ID 4)
+		treeCtrl->AppendItem(*node, name, 4);
+		uninstallerPaths[name.ToStdString()] = regPath.ToStdString();
 	}
 
 	treeCtrl->ExpandAll();
@@ -255,15 +267,18 @@ void MyFrame::OnProgramListUpdated() {
 
 	std::thread([this, info]() {
 		std::map<wxString, wxString> programs;
-		GetInstalledPrograms(programs);
+		std::map<wxString, wxString> mfgs;
+		GetInstalledPrograms(programs, mfgs);
 
-		wxTheApp->CallAfter([this, programs = std::move(programs), info]() {
+		wxTheApp->CallAfter([this, programs = std::move(programs), mfgs = std::move(mfgs), info]() {
 			delete info;
 			installedPrograms = std::move(programs);
+			manufacturers = std::move(mfgs);
 			PopulateTreeView();
 		});
 	}).detach();
 }
+
 
 void MyFrame::DisplayLeftovers(const std::vector<std::wstring>& leftovers) {
 	leftoverTreeCtrl->DeleteAllItems();
@@ -274,26 +289,6 @@ void MyFrame::DisplayLeftovers(const std::vector<std::wstring>& leftovers) {
 	}
 
 	leftoverTreeCtrl->ExpandAll();
-}
-
-std::string MyFrame::GetRegistryPathForProgram(const std::string& name) {
-	auto it = registryPaths.find(name);
-	return (it != registryPaths.end()) ? std::string(it->second.mb_str()) : std::string();
-}
-
-// Display uninstall string (clears and shows new string)
-void MyFrame::DisplayUninstallString(const wxString& uninstallStr)
-{
-	if (!uninstallListCtrl)
-	{
-		wxLogWarning("uninstallListCtrl is null.");
-		return;
-	}
-
-	uninstallString = uninstallStr;
-
-	uninstallListCtrl->DeleteAllItems();
-	uninstallListCtrl->InsertItem(0, uninstallStr);
 }
 
 // Display leftover items
@@ -367,7 +362,83 @@ void MyFrame::OnRestartAsAdmin(wxCommandEvent&) {
 		}
 	}
 	else {
-		wxLogMessage("Restarted the as administrator.");
+		wxLogMessage("OnRestartAsAdmin Log: Restarted the app as administrator.");
 	}
 }
+
+void ApplyThemeToWindow(wxWindow* win, const wxColour& bgColor, const wxColour& fgColor)
+{
+	if (!win) return;
+
+	win->SetBackgroundColour(bgColor);
+	win->SetForegroundColour(fgColor);
+
+	// Specijalno: ListCtrl i TreeCtrl zahtev dodatno osvežavanje
+	if (auto listCtrl = dynamic_cast<wxListCtrl*>(win))
+	{
+		listCtrl->SetTextColour(fgColor);
+		listCtrl->SetBackgroundColour(bgColor);
+	}
+
+	if (auto treeCtrl = dynamic_cast<wxTreeCtrl*>(win))
+	{
+		treeCtrl->SetBackgroundColour(bgColor);
+		treeCtrl->SetForegroundColour(fgColor);
+	}
+
+	// Rekurzivno primeni na decu
+	const auto& children = win->GetChildren();
+	for (wxWindow* child : children)
+	{
+		ApplyThemeToWindow(child, bgColor, fgColor);
+	}
+
+	win->Refresh();
+}
+
+void MyFrame::ApplyTheme(const wxString& theme)
+{
+	if (theme == "Dark") {
+		SetBackgroundColour(wxColour(45, 45, 48));
+		SetForegroundColour(*wxWHITE);
+	}
+	else {
+		SetBackgroundColour(wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW));
+		SetForegroundColour(*wxBLACK);
+	}
+
+	treeCtrl->SetBackgroundColour(GetBackgroundColour());
+	treeCtrl->SetForegroundColour(GetForegroundColour());
+	leftoverTreeCtrl->SetBackgroundColour(GetBackgroundColour());
+	leftoverTreeCtrl->SetForegroundColour(GetForegroundColour());
+
+	Refresh();
+	Update();
+}
+
+
+// Reading the .ini file and applying
+void MyFrame::LoadTheme()
+{
+	wxFileConfig config("CompleteUninstaller");
+	config.SetPath("/Settings");
+	currentTheme = config.Read("Theme", "Light"); // podrazumevana svetla
+	ApplyTheme(currentTheme);
+}
+
+void MyFrame::OnThemeSelect(wxCommandEvent& event)
+{
+	if (event.GetId() == Theme_Dark)
+		currentTheme = "Dark";
+	else
+		currentTheme = "Light";
+
+	wxFileConfig config("CompleteUninstaller");
+	config.SetPath("/Settings");
+	config.Write("Theme", currentTheme);
+	config.Flush();
+
+	ApplyTheme(currentTheme);
+}
+
 

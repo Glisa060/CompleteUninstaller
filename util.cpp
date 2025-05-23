@@ -23,56 +23,9 @@
 #include "process_utils.h"
 #include "registry_utils.h"
 #include "util.h"
-
-
+#include "gui.h"
 
 namespace fs = std::filesystem;
-
-void GetInstalledPrograms(std::map<wxString, wxString>& programs) {
-	HKEY hKey;
-	if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall", 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
-		wxLogError("Failed to open registry key for installed programs.");
-		return;
-	}
-
-	char subKeyName[256];
-	DWORD subKeyNameSize;
-	DWORD index = 0;
-
-	while (true) {
-		subKeyNameSize = sizeof(subKeyName);
-		if (RegEnumKeyExA(hKey, index, subKeyName, &subKeyNameSize, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) {
-			break;
-		}
-
-		HKEY subKey;
-		if (RegOpenKeyExA(hKey, subKeyName, 0, KEY_READ, &subKey) == ERROR_SUCCESS) {
-			char displayName[256] = { 0 }, uninstallString[512] = { 0 };
-			DWORD size;
-
-			// Retrieve the display name
-			size = sizeof(displayName);
-			if (RegQueryValueExA(subKey, "DisplayName", nullptr, nullptr, (LPBYTE)displayName, &size) == ERROR_SUCCESS) {
-
-				// Retrieve the uninstall string
-				size = sizeof(uninstallString);
-				if (RegQueryValueExA(subKey, "UninstallString", nullptr, nullptr, (LPBYTE)uninstallString, &size) == ERROR_SUCCESS) {
-
-					wxString name = wxString::FromUTF8(displayName);
-					wxString uninstall = wxString::FromUTF8(uninstallString);
-
-					if (!name.IsEmpty() && !uninstall.IsEmpty()) {
-						programs[name] = uninstall;
-					}
-				}
-			}
-			RegCloseKey(subKey);
-		}
-		index++;
-	}
-
-	RegCloseKey(hKey);
-}
 
 // Helper function to match names in a case-insensitive manner
 bool ContainsIgnoreCase(const std::wstring& haystack, const std::wstring& needle) {

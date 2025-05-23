@@ -46,7 +46,7 @@ bool RestartAsAdmin() {
 
 void runAsAdmin(wxFrame* mainFrame) {
     if (IsUserAnAdmin()) {
-        wxLogInfo("Already running as administrator.");
+        wxLogInfo("runAsAdmin Log: Already running as administrator.");
         return;
     }
 
@@ -70,11 +70,11 @@ void runAsAdmin(wxFrame* mainFrame) {
 
     wxLogInfo("Program relaunched with admin rights. Exiting current instance...");
 
-    // Umesto exit(0), koristi bezbedno zatvaranje:
+    
     if (mainFrame) {
-        mainFrame->Close(); // zatvori samo prozor
+        mainFrame->Close(); // close the window only
     }
     else {
-        wxTheApp->ExitMainLoop(); // sigurno zatvara aplikaciju
+        wxTheApp->ExitMainLoop(); // closes the app safely
     }
 }

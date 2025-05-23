@@ -5,6 +5,4 @@
 #include <map>
 #include <functional>
 
-
-void GetInstalledPrograms(std::map<wxString, wxString>& programs);
 void CleanUpLeftovers(const std::string& programName, const wxString& regPath, std::function<void()> onFinished);
