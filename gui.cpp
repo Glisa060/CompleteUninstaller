@@ -240,8 +240,8 @@ void MyFrame::PopulateTreeView() {
 
 	auto root = treeCtrl->AddRoot("Installed Programs", 0);  // Ikonica ID 0
 	auto userNode = treeCtrl->AppendItem(root, "[User] Installed", 1);    // Ikonica ID 1
-	auto sys32Node = treeCtrl->AppendItem(root, "[32-bit] System", 2);   // Ikonica ID 2
-	auto sys64Node = treeCtrl->AppendItem(root, "[64-bit] System", 3);   // Ikonica ID 3
+	auto sys32Node = treeCtrl->AppendItem(root, "[32-bit] System", 1);   // Ikonica ID 2
+	auto sys64Node = treeCtrl->AppendItem(root, "[64-bit] System", 1);   // Ikonica ID 3
 
 	for (const auto& [name, regPath] : installedPrograms) {
 		std::string key = regPath.ToStdString();
@@ -255,7 +255,7 @@ void MyFrame::PopulateTreeView() {
 			node = &userNode;
 
 		// Dodaj ikonicu programa (ID 4)
-		treeCtrl->AppendItem(*node, name, 4);
+		treeCtrl->AppendItem(*node, name, 2);
 		uninstallerPaths[name.ToStdString()] = regPath.ToStdString();
 	}
 

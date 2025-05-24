@@ -2,6 +2,7 @@
 
 #include <wx/treectrl.h>
 #include <wx/splitter.h>
+#include <wx/artprov.h> // Include this header to resolve wxArtProvider and related identifiers
 #include "gui.h"
 #include "util.h"
 #include "admin_utils.h"
@@ -28,13 +29,28 @@ MyFrame::MyFrame(const wxString& title)
 
     sizer->Add(splitter, 1, wxEXPAND | wxALL, 5);
 
-    // Image list & icons
+    //wxIcon testIcon("Icons/delete.png", wxBITMAP_TYPE_PNG);
+    //if (!testIcon.IsOk()) {
+    //    wxMessageBox("Icon not loaded!");
+    //}
+
+    //// Image list & icons
     imageList = new wxImageList(16, 16, true);
-    imageList->Add(wxIcon("Icons/tree_root.png", wxBITMAP_TYPE_PNG));   // ID 0
-    imageList->Add(wxIcon("Icons/user_icon.png", wxBITMAP_TYPE_PNG));   // ID 1
-    imageList->Add(wxIcon("Icons/sys32_icon.png", wxBITMAP_TYPE_PNG));  // ID 2
-    imageList->Add(wxIcon("Icons/sys64_icon.png", wxBITMAP_TYPE_PNG));  // ID 3
-    imageList->Add(wxIcon("Icons/delete.png", wxBITMAP_TYPE_PNG));      // ID 4
+    //imageList->Add(wxIcon("Icons/tree_root.png", wxBITMAP_TYPE_PNG));   // ID 0
+    //imageList->Add(wxIcon("Icons/user_icon.png", wxBITMAP_TYPE_PNG));   // ID 1
+    //imageList->Add(wxIcon("Icons/sys32_icon.png", wxBITMAP_TYPE_PNG));  // ID 2
+    //imageList->Add(wxIcon("Icons/sys64_icon.png", wxBITMAP_TYPE_PNG));  // ID 3
+    //imageList->Add(wxIcon("Icons/delete.png", wxBITMAP_TYPE_PNG));      // ID 4
+
+	// TODO: Add icons for the tree control
+
+    wxIcon builtin = wxArtProvider::GetIcon(wxART_LIST_VIEW, wxART_OTHER, wxSize(16, 16));
+    wxIcon folder = wxArtProvider::GetIcon(wxART_FOLDER, wxART_OTHER, wxSize(16, 16));
+    wxIcon exeFile = wxArtProvider::GetIcon(wxART_EXECUTABLE_FILE, wxART_OTHER, wxSize(16, 16));
+    imageList->Add(builtin); // test ID 0
+    imageList->Add(folder); // test ID 1
+    imageList->Add(exeFile); // test ID 1
+    
 
     treeCtrl->AssignImageList(imageList);
 
