@@ -179,9 +179,12 @@ void MyFrame::OnAnalyseMenu(wxCommandEvent&)
 	wxString uninstallStr = uninstallerPaths.contains(name) ? uninstallerPaths[name] : wxString("Uninstall string not found.");
 
 	std::vector<std::wstring> regVec = { std::wstring(registryPaths[name].begin(), registryPaths[name].end()) };
-	wxBusyInfo busy("Analysing leftovers...", this);
 
-	RunInBackground<std::vector<std::wstring>>([name, regVec]() {
+	// Create wxBusyInfo on the heap, so it lives beyond this function scope
+	wxBusyInfo* busy = new wxBusyInfo("Analysing leftovers...", this);
+
+	RunInBackground<AnalysisResult>(
+		[name, regVec]() -> AnalysisResult {
 		try {
 			std::vector<std::wstring> filePaths = {
 				GetProgramFilesDir(), GetProgramFilesX86Dir(),
@@ -190,47 +193,51 @@ void MyFrame::OnAnalyseMenu(wxCommandEvent&)
 				GetKnownFolderPath(FOLDERID_ProgramData)
 			};
 
-			auto files = SearchLeftoverFiles(filePaths, name);
-			auto reg = SearchRegistryKeys(regVec, wxString(name));
+			std::vector<std::wstring> searchTerms = { std::wstring(name.begin(), name.end()) };
+
+			auto files = SearchLeftoverFiles(filePaths, searchTerms);
+			auto reg = SearchRegistryKeys(regVec, std::wstring(name.begin(), name.end()));
 			auto svc = SearchServicesAndProcesses(std::wstring(name.begin(), name.end()));
 
-			std::vector<std::wstring> all(files);
-			all.insert(all.end(), reg.begin(), reg.end());
-			all.insert(all.end(), svc.begin(), svc.end());
-			return all;
+			return { files, reg, svc };
 		}
 		catch (const std::exception& e) {
 			wxLogError("Exception in background search: %s", e.what());
-			wxTheApp->CallAfter([=]() {
+			wxTheApp->CallAfter([]() {
 				wxLogError("Error during background search.\nCheck logs for details.");
 			});
-			return std::vector<std::wstring>{};
+			return {};
 		}
-	}, [this, uninstallStr](std::vector<std::wstring> leftovers) {
-		try {
-			wxTheApp->CallAfter([this, uninstallStr]() {
-				wxLogMessage("Uninstall string: %s", uninstallStr);
-			});
-			wxTheApp->CallAfter([this, leftovers]() {
-				if (leftovers.empty()) {
-					wxMessageBox("No leftovers found.", "Clean", wxICON_INFORMATION);
-				}
-				else {
-					DisplayLeftovers(leftovers);
-				}
-			});
-		}
-		catch (const std::exception& e) {
-			wxLogError("Exception in result callback: %s", e.what());
-			wxMessageBox("A crash occurred while displaying results.\nCheck logs.", "Error", wxICON_ERROR);
-		}
-		catch (...) {
-			wxLogError("Unknown crash in result callback.");
-			wxMessageBox("An unknown crash occurred after search completed.", "Error", wxICON_ERROR);
-		}
-	}
-		);
+	},
+		[this, uninstallStr, busy](AnalysisResult result) {
+		wxTheApp->CallAfter([this, result, uninstallStr, busy]() {
+			delete busy; // Close the busy popup
 
+			wxLogMessage("Uninstall string: %s", uninstallStr);
+
+			size_t total = result.files.size() + result.registryKeys.size() + result.services.size();
+
+			if (total == 0) {
+				wxMessageBox("No leftovers found.", "Clean", wxICON_INFORMATION);
+			}
+			else {
+				wxString msg;
+				msg.Printf("Leftovers found:\n\n"
+					"- Files: %zu\n"
+					"- Registry Keys: %zu\n"
+					"- Services/Processes: %zu",
+					result.files.size(),
+					result.registryKeys.size(),
+					result.services.size());
+				wxMessageBox(msg, "Analysis Results", wxOK | wxICON_INFORMATION);
+
+				// You can now use individual vectors for display
+				DisplayLeftovers(result.files, result.registryKeys, result.services);
+			}
+		});
+	}
+
+	);
 }
 
 // === UI helpers ===
@@ -279,19 +286,6 @@ void MyFrame::OnProgramListUpdated() {
 	}).detach();
 }
 
-
-void MyFrame::DisplayLeftovers(const std::vector<std::wstring>& leftovers) {
-	leftoverTreeCtrl->DeleteAllItems();
-	auto root = leftoverTreeCtrl->AddRoot("Detected Leftovers");
-
-	for (const auto& item : leftovers) {
-		leftoverTreeCtrl->AppendItem(root, wxString(item));
-	}
-
-	leftoverTreeCtrl->ExpandAll();
-}
-
-// Display leftover items
 void MyFrame::DisplayProgramDetails(const std::vector<std::wstring>& leftoverItems)
 {
 	leftovers = leftoverItems;
@@ -352,7 +346,7 @@ void MyFrame::OnDeleteSelected(wxCommandEvent&)
 
 	// You might want to rerun analysis here or remove items from the UI
 	// For now, just clear selected items:
-	DisplayLeftovers({});  // Clear list
+	//DisplayLeftovers({});  // Clear list
 }
 
 void MyFrame::OnRestartAsAdmin(wxCommandEvent&) {
@@ -373,7 +367,6 @@ void ApplyThemeToWindow(wxWindow* win, const wxColour& bgColor, const wxColour& 
 	win->SetBackgroundColour(bgColor);
 	win->SetForegroundColour(fgColor);
 
-	// Specijalno: ListCtrl i TreeCtrl zahtev dodatno osvežavanje
 	if (auto listCtrl = dynamic_cast<wxListCtrl*>(win))
 	{
 		listCtrl->SetTextColour(fgColor);
@@ -386,7 +379,7 @@ void ApplyThemeToWindow(wxWindow* win, const wxColour& bgColor, const wxColour& 
 		treeCtrl->SetForegroundColour(fgColor);
 	}
 
-	// Rekurzivno primeni na decu
+	// Apply theme recursively to children
 	const auto& children = win->GetChildren();
 	for (wxWindow* child : children)
 	{
@@ -440,5 +433,35 @@ void MyFrame::OnThemeSelect(wxCommandEvent& event)
 
 	ApplyTheme(currentTheme);
 }
+
+// Display leftover items
+void MyFrame::DisplayLeftovers(const std::vector<std::wstring>& leftovers, const std::vector<std::wstring>& registryKeys, const std::vector<std::wstring>& services) {
+	leftoverTreeCtrl->DeleteAllItems();
+
+	// Single root node
+	auto root = leftoverTreeCtrl->AddRoot("Analysis Results");
+
+	// Section: Leftover Files
+	auto filesRoot = leftoverTreeCtrl->AppendItem(root, "Detected Leftover Files");
+	for (const auto& item : leftovers) {
+		leftoverTreeCtrl->AppendItem(filesRoot, wxString(item));
+	}
+
+	// Section: Registry Keys
+	auto registryRoot = leftoverTreeCtrl->AppendItem(root, "Detected Registry Keys");
+	for (const auto& item : registryKeys) {
+		leftoverTreeCtrl->AppendItem(registryRoot, wxString(item));
+	}
+
+	// Section: Services / Processes
+	auto servicesRoot = leftoverTreeCtrl->AppendItem(root, "Detected Running Services");
+	for (const auto& item : services) {
+		leftoverTreeCtrl->AppendItem(servicesRoot, wxString(item));
+	}
+
+	leftoverTreeCtrl->ExpandAll();
+}
+
+
 
 

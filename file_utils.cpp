@@ -5,12 +5,12 @@
 #include <wx/log.h>
 #include <wx/string.h>
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 #include <string>
+#include <windows.h>
 #include <vector>
 #include <exception>
 #include <filesystem>
-#include <set>
+#include <unordered_set>
 #include <shlwapi.h>
 #include <ShlObj_core.h>
 
@@ -18,108 +18,101 @@
 #include "file_utils.h"
 
 namespace fs = std::filesystem;
+fs::path lastValidPath;
 
-// Detect leftover files
-std::vector<std::wstring> SearchLeftoverFiles(const std::vector<std::wstring>& paths, const std::string& programName) {
-    wxBusyInfo* info = new wxBusyInfo("Searching for leftover files...");
-    std::vector<std::wstring> found;
-    std::wstring progNameW(programName.begin(), programName.end());
-    bool permissionErrorShown = false;
+//TODO: Fix searching in AppData/Local/Programs; Dopamine for example is the problem it evades the search somehow
+std::vector<std::wstring> SearchLeftoverFiles(
+    const std::vector<std::wstring>& directories,
+    const std::vector<std::wstring>& searchTerms
+) {
+    std::vector<std::wstring> foundFiles;
+    const std::wstring lowerTerm = ToLower(searchTerms.front());
 
-    static const std::set<std::wstring> skipFolders = {
-        L"System Volume Information",
-        L"$Recycle.Bin",
-        L"Config.Msi",
-        L"MSOCache",
-        L"Recovery",
-        L"WindowsApps",
-        L"ProgramData\\Microsoft\\Windows Defender"
+    std::unordered_set<std::wstring> ignoredFolders = {
+        L"node_modules", L"npm", L"yarn", L"cache", L"temp", L"packages"
     };
 
-    wxLogMessage("SearchLeftoverFiles started for program: %s", wxString(programName));
-
-    for (const auto& basePath : paths) {
-        wxLogMessage("Scanning base path: %s", wxString(basePath));
-
-        try {
-            if (!fs::exists(basePath)) {
-                wxLogWarning("Path does not exist: %s", wxString(basePath));
-                continue;
-            }
-            if (!fs::is_directory(basePath)) {
-                wxLogWarning("Not a directory: %s", wxString(basePath));
-                continue;
-            }
-
-            for (const auto& entry : fs::recursive_directory_iterator(basePath, fs::directory_options::skip_permission_denied)) {
-                try {
-                    const auto& entryPath = entry.path();
-                    const auto relPath = entryPath.lexically_relative(basePath).wstring();
-
-                    bool skip = false;
-                    for (const auto& folder : skipFolders) {
-                        if (relPath.find(folder) != std::wstring::npos || entryPath.filename().wstring() == folder) {
-                            wxLogDebug("Skipping known system folder: %s", wxString(entryPath.wstring()));
-                            skip = true;
-                            break;
-                        }
-                    }
-                    if (skip) continue;
-
-                    if (entry.is_directory()) {
-                        std::wstring folderName = entryPath.filename().wstring();
-                        wxLogDebug("Checking folder: %s", wxString(entryPath.wstring()));
-
-                        if (folderName.find(progNameW) != std::wstring::npos) {
-                            found.push_back(entryPath.wstring());
-                            wxLogInfo("Matched folder: %s", wxString(entryPath.wstring()));
-                        }
-                    }
-                    else if (entry.is_regular_file()) {
-                        std::wstring fileName = entryPath.filename().wstring();
-                        wxLogDebug("Checking file: %s", wxString(entryPath.wstring()));
-
-                        if (fileName.find(progNameW) != std::wstring::npos) {
-                            found.push_back(entryPath.wstring());
-                            wxLogInfo("Matched file: %s", wxString(entryPath.wstring()));
-                        }
-                    }
-                }
-                catch (const std::exception& inner) {
-                    wxLogError("Error processing entry: %s | %s", wxString(entry.path().wstring()), inner.what());
-                }
-            }
+    for (const auto& dir : directories) {
+        fs::path root(dir);
+        if (!fs::exists(root) || !fs::is_directory(root)) {
+            wxLogWarning("Directory does not exist or is not a directory: %s", root.wstring());
+            continue;
         }
-        catch (const std::exception& e) {
-            wxLogError("Exception while processing base path: %s | %s", wxString(basePath), e.what());
-            if (!permissionErrorShown) {
-                permissionErrorShown = true;
-                wxTheApp->CallAfter([] {
-                    wxMessageBox(
-                        "Some folders could not be searched due to permission issues.\n"
-                        "Run the application as administrator.",
-                        "Permission Denied",
-                        wxICON_WARNING | wxOK
-                    );
-                });
+
+        std::wstring dirLower = ToLower(root.wstring());
+
+        bool forceDeepTraversal =
+            dirLower.find(L"appdata\\local\\programs") != std::wstring::npos ||
+            dirLower.find(L"appdata\\local") != std::wstring::npos ||
+            dirLower.find(L"appdata\\roaming") != std::wstring::npos ||
+            dirLower.find(L"appdata\\locallow") != std::wstring::npos ||
+            dirLower.find(L"programdata") != std::wstring::npos;
+
+        bool isUserProfile = (
+            root == fs::path(getenv("USERPROFILE")) ||
+            dirLower.find(L"c:\\users\\") != std::wstring::npos
+            );
+
+        for (const auto& entry : fs::directory_iterator(root, fs::directory_options::skip_permission_denied)) {
+            try {
+                if (!entry.is_directory()) continue;
+
+                fs::path subPath = entry.path();
+                std::wstring folderName = ToLower(subPath.filename().wstring());
+
+                // Only allow Desktop/Documents under user profile
+                if (isUserProfile && folderName != L"desktop" && folderName != L"documents") {
+                    wxLogMessage("Skipping non-essential user folder: %s", subPath.wstring());
+                    continue;
+                }
+
+                // Skip noisy folders unless they match the search term
+                if (!forceDeepTraversal && ignoredFolders.contains(folderName) &&
+                    folderName.find(lowerTerm) == std::wstring::npos) {
+                    wxLogMessage("Skipping noisy unrelated folder: %s", subPath.wstring());
+                    continue;
+                }
+
+                // Traverse deeply into allowed subdirectory
+                wxLogMessage("Traversing: %s", subPath.wstring());
+                fs::recursive_directory_iterator it(subPath, fs::directory_options::skip_permission_denied), end;
+                fs::path lastValidPath;
+
+                while (it != end) {
+                    try {
+                        lastValidPath = it->path();
+                        std::wstring current = ToLower(lastValidPath.wstring());
+
+                        if (current.find(lowerTerm) != std::wstring::npos) {
+                            foundFiles.push_back(lastValidPath.wstring());
+                        }
+
+                        ++it;
+                    }
+                    catch (const std::exception& e) {
+                        wxLogError("Error incrementing iterator after: %s\nReason: %s",
+                            lastValidPath.wstring(), e.what());
+                        break;
+                    }
+                }
+            }
+            catch (const std::exception& e) {
+                wxLogError("Error accessing subdir: %s", e.what());
+                continue;
             }
         }
     }
 
-    wxLogMessage("SearchLeftoverFiles complete. %zu items found.", found.size());
-
-    size_t foundCount = found.size();
-
-    // Must show messagebox in main thread
-    wxTheApp->CallAfter([info, foundCount]() {
-        delete info;
-        wxMessageBox("File search completed.\n" + std::to_string(foundCount) + " items found.", "Search Complete", wxOK | wxICON_INFORMATION);
-    });
-
-    return found;
+    return foundFiles;
 }
 
 
+
+std::wstring ToLower(const std::wstring& str) {
+    std::wstring lower;
+    std::transform(str.begin(), str.end(), std::back_inserter(lower), ::towlower);
+    return lower;
+}
 
 std::wstring GetKnownFolderPath(REFKNOWNFOLDERID folderId) {
 	PWSTR path = nullptr;

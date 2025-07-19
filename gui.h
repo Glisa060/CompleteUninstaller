@@ -21,6 +21,7 @@ public:
 private:  
     wxTreeCtrl* treeCtrl;  
     wxTreeCtrl* leftoverTreeCtrl; // Leftover files tree view  
+
     wxListCtrl* leftoversListCtrl;  // To show leftover files/registry keys/services
     wxString currentTheme;
     // Icons
@@ -50,8 +51,8 @@ private:
     void OnTreeSelectionChanged(wxTreeEvent& event);  
     void PopulateTreeView();  
     void OnProgramListUpdated();  
-    void DisplayLeftovers(const std::vector<std::wstring>& leftovers);  
-    void OnAnalyseMenu(wxCommandEvent& event);  
+    void DisplayLeftovers(const std::vector<std::wstring>& leftovers, const std::vector<std::wstring>& registryKeys, const std::vector<std::wstring>& services);
+    void OnAnalyseMenu(wxCommandEvent& event);
 };
 
 

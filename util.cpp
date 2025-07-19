@@ -74,7 +74,8 @@ void CleanUpLeftovers(const std::string& programName, const wxString& regPath, s
 		};
 
 		// Search for leftover files and folders
-		auto fileLeftovers = SearchLeftoverFiles(filePaths, programName);
+		std::vector<std::wstring> searchTerms = { std::wstring(programName.begin(), programName.end()) };
+		auto fileLeftovers = SearchLeftoverFiles(filePaths, searchTerms);
 
 		for (const auto& filePath : fileLeftovers) {
 			wxTheApp->CallAfter([filePath]() {
