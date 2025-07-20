@@ -14,3 +14,6 @@ std::wstring GetProgramFilesDir();
 std::wstring GetProgramFilesX86Dir();
 bool DeleteFileOrFolder(const std::wstring& path);
 std::wstring ToLower(const std::wstring& str);
+bool IsDeepTraversalPath(const std::wstring& path);
+std::wstring NormalizeSearchTerm(const std::wstring& term);
+

@@ -15,6 +15,9 @@ MyFrame::MyFrame(const wxString& title)
     else
         SetTitle("Complete Uninstaller");
 
+ /*   wxString version = wxVERSION_STRING;
+    wxLogMessage("Using wxWidgets version: %s", version);*/
+
     wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
 
     wxSplitterWindow* splitter = new wxSplitterWindow(this, wxID_ANY);
@@ -66,6 +69,7 @@ MyFrame::MyFrame(const wxString& title)
     wxMenu* themeMenu = new wxMenu;
 
     helpMenu->Append(Minimal_About, "&About\tF1", "Show about dialog");
+    helpMenu->Append(Minimal_OpenLog, "&Open Log File\tCtrl+L", "Open the application log file");
     fileMenu->Append(Minimal_Open, "&Run selected\tAlt-O", "Run the uninstaller for the selected item");
     fileMenu->Append(Minimal_Analyse, "&Analyse selected\tAlt-A", "Analyse leftovers of the selected program");
     fileMenu->Append(Minimal_Quit, "E&xit\tAlt-X", "Quit this program");
@@ -78,9 +82,10 @@ MyFrame::MyFrame(const wxString& title)
     menuBar->Append(themeMenu, "&Theme");
     menuBar->Append(helpMenu, "&Help");
 
+
     SetMenuBar(menuBar);
     CreateStatusBar(2);
-    SetStatusText("Complete Uninstaller 0.1 alpha!");
+    SetStatusText(wxString::Format("Complete Uninstaller 0.1 alpha - %s", wxVERSION_STRING));
 }
 
 

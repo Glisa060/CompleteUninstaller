@@ -117,3 +117,10 @@ void CleanUpLeftovers(const std::string& programName, const wxString& regPath, s
 	}).detach();
 }
 
+wxString GetLogFilePath()
+{
+	wxFileName exePath(wxStandardPaths::Get().GetExecutablePath());
+	wxString exeDir = exePath.GetPath();
+	return exeDir + wxFileName::GetPathSeparator() + "app.log";
+}
+

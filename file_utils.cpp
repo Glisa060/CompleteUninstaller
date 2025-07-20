@@ -11,6 +11,7 @@
 #include <exception>
 #include <filesystem>
 #include <unordered_set>
+#include <regex>
 #include <shlwapi.h>
 #include <ShlObj_core.h>
 
@@ -20,13 +21,13 @@
 namespace fs = std::filesystem;
 fs::path lastValidPath;
 
-//TODO: Fix searching in AppData/Local/Programs; Dopamine for example is the problem it evades the search somehow
 std::vector<std::wstring> SearchLeftoverFiles(
     const std::vector<std::wstring>& directories,
     const std::vector<std::wstring>& searchTerms
 ) {
     std::vector<std::wstring> foundFiles;
     const std::wstring lowerTerm = ToLower(searchTerms.front());
+    wxLogMessage("Search term all lower caps: %s", lowerTerm);
 
     std::unordered_set<std::wstring> ignoredFolders = {
         L"node_modules", L"npm", L"yarn", L"cache", L"temp", L"packages"
@@ -39,38 +40,28 @@ std::vector<std::wstring> SearchLeftoverFiles(
             continue;
         }
 
-        std::wstring dirLower = ToLower(root.wstring());
-
-        bool forceDeepTraversal =
-            dirLower.find(L"appdata\\local\\programs") != std::wstring::npos ||
-            dirLower.find(L"appdata\\local") != std::wstring::npos ||
-            dirLower.find(L"appdata\\roaming") != std::wstring::npos ||
-            dirLower.find(L"appdata\\locallow") != std::wstring::npos ||
-            dirLower.find(L"programdata") != std::wstring::npos;
-
-        bool isUserProfile = (
-            root == fs::path(getenv("USERPROFILE")) ||
-            dirLower.find(L"c:\\users\\") != std::wstring::npos
-            );
-
         for (const auto& entry : fs::directory_iterator(root, fs::directory_options::skip_permission_denied)) {
             try {
                 if (!entry.is_directory()) continue;
 
                 fs::path subPath = entry.path();
                 std::wstring folderName = ToLower(subPath.filename().wstring());
+                std::wstring subPathStr = ToLower(subPath.wstring());
 
-                // Only allow Desktop/Documents under user profile
-                if (isUserProfile && folderName != L"desktop" && folderName != L"documents") {
-                    wxLogMessage("Skipping non-essential user folder: %s", subPath.wstring());
-                    continue;
-                }
+                bool forceDeepTraversal = IsDeepTraversalPath(subPathStr);
 
                 // Skip noisy folders unless they match the search term
-                if (!forceDeepTraversal && ignoredFolders.contains(folderName) &&
+                if (!forceDeepTraversal &&
+                    ignoredFolders.contains(folderName) &&
                     folderName.find(lowerTerm) == std::wstring::npos) {
                     wxLogMessage("Skipping noisy unrelated folder: %s", subPath.wstring());
                     continue;
+                }
+
+                // Match top-level folder directly
+                if (subPathStr.find(lowerTerm) != std::wstring::npos) {
+                    wxLogMessage("Matched top-level folder: %s", subPath.wstring());
+                    foundFiles.push_back(subPath.wstring());
                 }
 
                 // Traverse deeply into allowed subdirectory
@@ -84,6 +75,7 @@ std::vector<std::wstring> SearchLeftoverFiles(
                         std::wstring current = ToLower(lastValidPath.wstring());
 
                         if (current.find(lowerTerm) != std::wstring::npos) {
+                            wxLogMessage("Matched leftover: %s", lastValidPath.wstring());
                             foundFiles.push_back(lastValidPath.wstring());
                         }
 
@@ -105,8 +97,6 @@ std::vector<std::wstring> SearchLeftoverFiles(
 
     return foundFiles;
 }
-
-
 
 std::wstring ToLower(const std::wstring& str) {
     std::wstring lower;
@@ -178,3 +168,19 @@ bool DeleteFileOrFolder(const std::wstring& path) {
 		return DeleteFileW(path.c_str()) == TRUE;
 	}
 }
+
+bool IsDeepTraversalPath(const std::wstring& path) {
+    std::wstring lower = ToLower(path);
+    return lower.find(L"appdata\\local\\programs") != std::wstring::npos ||
+        lower.find(L"appdata\\local") != std::wstring::npos ||
+        lower.find(L"appdata\\roaming") != std::wstring::npos ||
+        lower.find(L"appdata\\locallow") != std::wstring::npos ||
+        lower.find(L"programdata") != std::wstring::npos;
+}
+
+std::wstring NormalizeSearchTerm(const std::wstring& term) {
+    std::wregex versionPattern(LR"(\s*\d+(\.\d+)*$)");
+    return std::regex_replace(term, versionPattern, L"");
+}
+
+

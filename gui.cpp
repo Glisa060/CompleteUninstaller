@@ -28,6 +28,7 @@ EVT_MENU(Minimal_Analyse, MyFrame::OnAnalyseMenu)
 EVT_MENU(RestartAsAdmin_ID, MyFrame::OnRestartAsAdmin)
 EVT_MENU(Theme_Light, MyFrame::OnThemeSelect)
 EVT_MENU(Theme_Dark, MyFrame::OnThemeSelect)
+EVT_MENU(Minimal_OpenLog, MyFrame::OnOpenLogFile)
 EVT_TREE_SEL_CHANGED(Run_Selected, MyFrame::OnTreeSelectionChanged)
 wxEND_EVENT_TABLE()
 
@@ -44,9 +45,11 @@ bool MyApp::OnInit() {
 	if (!wxApp::OnInit())
 		return false;
 
-	logFile = fopen("logfile.txt", "w");
+	wxString logFilePath = GetLogFilePath();
+
+	FILE* logFile = fopen(logFilePath.mb_str(), "w");
 	if (!logFile) {
-		wxLogError("Failed to open log file!");
+		wxLogError("Failed to open log file at: %s", logFilePath);
 		return false;
 	}
 
@@ -194,8 +197,13 @@ void MyFrame::OnAnalyseMenu(wxCommandEvent&)
 			};
 
 			std::vector<std::wstring> searchTerms = { std::wstring(name.begin(), name.end()) };
-
-			auto files = SearchLeftoverFiles(filePaths, searchTerms);
+			//TODO: Normalize the search term better to account for x64, x86 and other variations
+			auto& cleanedTerms = searchTerms;
+			cleanedTerms[0] = NormalizeSearchTerm(searchTerms[0]);
+			wxLogMessage("Normalized search term: %s", cleanedTerms[0]);
+			auto files = SearchLeftoverFiles(filePaths, cleanedTerms);
+			//TODO: Fix Registry Key search include more Hives like HKEY_USERS, HKEY_CLASSES_ROOT, etc.
+			// search is pretty basic, just looking for the program name in registry paths
 			auto reg = SearchRegistryKeys(regVec, std::wstring(name.begin(), name.end()));
 			auto svc = SearchServicesAndProcesses(std::wstring(name.begin(), name.end()));
 
@@ -461,6 +469,28 @@ void MyFrame::DisplayLeftovers(const std::vector<std::wstring>& leftovers, const
 
 	leftoverTreeCtrl->ExpandAll();
 }
+
+void MyFrame::OnOpenLogFile(wxCommandEvent& WXUNUSED(event))
+{
+	//wxString homeDir = wxStandardPaths::Get().GetUserConfigDir(); // typically %APPDATA% on Windows
+	//wxString homeDir = wxGetHomeDir(); // gets user's home directory (e.g. C:\Users\Milan)
+	// wxStandardPaths::Get().GetUserDataDir() returns a user-specific application data folder (usually inside AppData/Roaming), which is the conventional place to store app data for apps that respect the platform conventions.
+	//wxString logFilePath = wxStandardPaths::Get().GetUserDataDir() + "/app.log";
+
+	wxString logFilePath = GetLogFilePath();
+
+	if (!wxFileExists(logFilePath))
+	{
+		wxMessageBox("Log file not found:\n" + logFilePath, "Error", wxICON_ERROR);
+		return;
+	}
+
+	if (!wxLaunchDefaultApplication(logFilePath))
+	{
+		wxMessageBox("Failed to open log file:\n" + logFilePath, "Error", wxICON_ERROR);
+	}
+}
+
 
 
 

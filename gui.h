@@ -4,6 +4,7 @@
 #include <wx/listctrl.h>
 #include <map>
 
+
 class MyApp : public wxApp  
 {  
 public:  
@@ -53,6 +54,7 @@ private:
     void OnProgramListUpdated();  
     void DisplayLeftovers(const std::vector<std::wstring>& leftovers, const std::vector<std::wstring>& registryKeys, const std::vector<std::wstring>& services);
     void OnAnalyseMenu(wxCommandEvent& event);
+    void OnOpenLogFile(wxCommandEvent& WXUNUSED(event));
 };
 
 

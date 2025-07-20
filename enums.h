@@ -11,6 +11,8 @@ enum
     RestartAsAdmin_ID = wxID_ANY + 3,
     Theme_Light = wxID_ANY + 4,
     Theme_Dark = wxID_ANY + 5,
+    Minimal_OpenLog = wxID_ANY + 6 // New ID for Open Log menu item
+
 };
 
 enum class Theme { Light, Dark };

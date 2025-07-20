@@ -1,9 +1,0 @@
-00:13:59: Enumerating installed programs...
-00:13:59: Processing subkey: ace2013a-1220-5ef4-b1fa-04d91e1bc36e
-00:13:59: Added program: Dopamine 3.0.0
-00:13:59: Processing subkey: SumatraPDF
-00:13:59: Added program: SumatraPDF
-00:13:59: Processing subkey: {4658174E-7E54-449C-8BED-924A9ABA5EDD}
-00:13:59: Added program: Viber
-00:13:59: Processing subkey: {53F49750-6209-4FBF-9CA8-7A333C87D1ED}_is1
-00:13:59: Added program: Telegram Desktop
