@@ -1,29 +1,33 @@
-#include <wx/log.h>
-#include <wx/busyinfo.h>
-#include <algorithm>
 #include "registry_utils.h"
+// Returns the root HKEY from the input full registry path string.
+// 'subKey' will contain the rest of the key path.
+// Returns nullptr on failure.
+HKEY GetRootKeyFromString(const std::wstring& fullPath, std::wstring& subKey)
+{
+    static const std::pair<std::wstring, HKEY> roots[] = {
+        {L"HKEY_LOCAL_MACHINE", HKEY_LOCAL_MACHINE},
+        {L"HKEY_CURRENT_USER", HKEY_CURRENT_USER},
+        {L"HKEY_CLASSES_ROOT", HKEY_CLASSES_ROOT},
+        {L"HKEY_USERS", HKEY_USERS},
+        {L"HKEY_CURRENT_CONFIG", HKEY_CURRENT_CONFIG}
+    };
 
-// Helper function to get root HKEY and subkey path from a full registry path string.
-// Supports prefixes like "HKLM\", "HKEY_LOCAL_MACHINE\", "HKCU\", "HKEY_CURRENT_USER\".
-static HKEY GetRootKeyFromString(const std::wstring& fullKeyPath, std::wstring& subKeyOut) {
-    if (fullKeyPath.compare(0, 5, L"HKLM\\") == 0) {
-        subKeyOut = fullKeyPath.substr(5);
-        return HKEY_LOCAL_MACHINE;
+    for (const auto& [name, hive] : roots) {
+        if (fullPath.compare(0, name.length(), name) == 0) {
+            // Expect backslash after root name, or full path equals root name only
+            if (fullPath.length() == name.length()) {
+                subKey.clear();
+                return hive;
+            }
+            else if (fullPath[name.length()] == L'\\') {
+                subKey = fullPath.substr(name.length() + 1); // skip backslash
+                return hive;
+            }
+        }
     }
-    if (fullKeyPath.compare(0, 18, L"HKEY_LOCAL_MACHINE\\") == 0) {
-        subKeyOut = fullKeyPath.substr(18);
-        return HKEY_LOCAL_MACHINE;
-    }
-    if (fullKeyPath.compare(0, 5, L"HKCU\\") == 0) {
-        subKeyOut = fullKeyPath.substr(5);
-        return HKEY_CURRENT_USER;
-    }
-    if (fullKeyPath.compare(0, 17, L"HKEY_CURRENT_USER\\") == 0) {
-        subKeyOut = fullKeyPath.substr(17);
-        return HKEY_CURRENT_USER;
-    }
-    // If root not recognized, return nullptr and output full string as subKey.
-    subKeyOut = fullKeyPath;
+
+    // Not a recognized root hive
+    subKey.clear();
     return nullptr;
 }
 
@@ -73,66 +77,164 @@ LONG RegDeleteKeyRecursiveByPath(const wxString& fullKeyPath) {
     return RegDeleteKeyRecursiveByPath(fullKeyPath.ToStdWstring());
 }
 
+static void RecursiveSearchRegistry(
+    HKEY hKey,
+    const std::wstring& currentPath,
+    const std::wstring& progNameW,
+    std::mutex& foundKeysMutex,
+    std::vector<std::wstring>& foundKeys)
+{
+    DWORD subKeyCount = 0, maxKeyNameLen = 0, valueCount = 0, maxValueNameLen = 0, maxValueLen = 0;
+    if (RegQueryInfoKeyW(hKey, NULL, NULL, NULL, &subKeyCount, &maxKeyNameLen, NULL,
+        &valueCount, &maxValueNameLen, &maxValueLen, NULL, NULL) != ERROR_SUCCESS) {
+        return;
+    }
+
+    std::vector<WCHAR> keyNameBuffer(maxKeyNameLen + 1);
+    for (DWORD i = 0; i < subKeyCount; ++i) {
+        DWORD keyNameLen = maxKeyNameLen + 1;
+        LONG result = RegEnumKeyExW(hKey, i, keyNameBuffer.data(), &keyNameLen, NULL, NULL, NULL, NULL);
+        if (result != ERROR_SUCCESS) continue;
+
+        std::wstring nameStr(keyNameBuffer.data(), keyNameLen);
+        std::wstring lowerName = nameStr;
+        std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::towlower);
+
+        if (lowerName.find(progNameW) != std::wstring::npos) {
+            std::wstring fullFoundKey = currentPath + L"\\" + nameStr;
+            {
+                std::lock_guard<std::mutex> lock(foundKeysMutex);
+                foundKeys.push_back(fullFoundKey);
+            }
+            wxLogInfo("Found leftover registry key (name match): %s", wxString(fullFoundKey));
+        }
+
+        HKEY subKeyHandle;
+        if (RegOpenKeyExW(hKey, keyNameBuffer.data(), 0, KEY_READ, &subKeyHandle) == ERROR_SUCCESS) {
+            RecursiveSearchRegistry(subKeyHandle, currentPath + L"\\" + nameStr, progNameW, foundKeysMutex, foundKeys);
+            RegCloseKey(subKeyHandle);
+        }
+    }
+
+    std::vector<WCHAR> valueNameBuffer(maxValueNameLen + 1);
+    std::vector<BYTE> valueDataBuffer(maxValueLen);
+
+    for (DWORD i = 0; i < valueCount; ++i) {
+        DWORD valueNameLen = maxValueNameLen + 1;
+        DWORD dataSize = maxValueLen;
+        DWORD type;
+
+        LONG result = RegEnumValueW(hKey, i, valueNameBuffer.data(), &valueNameLen, NULL, &type, valueDataBuffer.data(), &dataSize);
+        if (result != ERROR_SUCCESS) continue;
+
+        bool match = false;
+
+        if (type == REG_SZ || type == REG_EXPAND_SZ) {
+            // Construct string safely (stop at null terminator)
+            std::wstring valueStr(reinterpret_cast<wchar_t*>(valueDataBuffer.data()));
+            std::wstring lowerVal = valueStr;
+            std::transform(lowerVal.begin(), lowerVal.end(), lowerVal.begin(), ::towlower);
+            if (lowerVal.find(progNameW) != std::wstring::npos) {
+                match = true;
+            }
+        }
+        else if (type == REG_MULTI_SZ) {
+            const wchar_t* str = reinterpret_cast<wchar_t*>(valueDataBuffer.data());
+            while (*str) {
+                std::wstring entry(str);
+                std::wstring lowerEntry = entry;
+                std::transform(lowerEntry.begin(), lowerEntry.end(), lowerEntry.begin(), ::towlower);
+                if (lowerEntry.find(progNameW) != std::wstring::npos) {
+                    match = true;
+                    break;
+                }
+                str += entry.length() + 1;
+            }
+        }
+
+        if (match) {
+            {
+                std::lock_guard<std::mutex> lock(foundKeysMutex);
+                foundKeys.push_back(currentPath);
+            }
+            wxLogInfo("Found leftover registry key (value match): %s", wxString(currentPath));
+            break;  // Found a match, no need to check further values for this key
+        }
+    }
+}
+
+
 // Search registry keys in both HKLM and HKCU under given relative paths for a program name.
 // Case insensitive search.
 // Returns vector of full key paths including root prefix (e.g. HKLM\...).
-std::vector<std::wstring> SearchRegistryKeys(const std::vector<std::wstring>& registryPaths, const wxString& programName) {
-    wxBusyInfo info("Searching registry keys...");
-    std::vector<std::wstring> foundKeys;
+// Mutex for thread-safe access to shared vector
+static std::mutex foundKeysMutex;
 
-    // Convert program name to lowercase for case-insensitive matching.
+std::vector<std::wstring> SearchRegistryKeys(const std::vector<std::wstring>& registryPaths, const wxString& programName)
+{
+    std::vector<std::wstring> foundKeys;
     std::wstring progNameW(programName.begin(), programName.end());
     std::transform(progNameW.begin(), progNameW.end(), progNameW.begin(), ::towlower);
 
-    for (const auto& subKey : registryPaths) {
-        // Search in both HKLM and HKCU for the given subkey.
-        std::vector<HKEY> roots = { HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER };
-        for (auto root : roots) {
+    std::vector<std::thread> workers;
+
+    for (const auto& fullKeyPath : registryPaths) {
+        if (fullKeyPath.empty()) {
+            wxLogWarning("Registry path is empty!");
+            continue;
+        }
+
+        wxLogMessage("Registry path: %s", wxString(fullKeyPath));
+
+        // Capture foundKeysMutex by reference, also foundKeys by reference
+        workers.emplace_back([fullKeyPath, &progNameW, &foundKeys]() {
+            std::wstring subKey;
+            HKEY root = GetRootKeyFromString(fullKeyPath, subKey);
+
+            if (root == nullptr) {
+                wxLogWarning("Invalid root in registry path: %s", wxString(fullKeyPath));
+                return;
+            }
+
             HKEY hKey;
             if (RegOpenKeyExW(root, subKey.c_str(), 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
-                wxLogWarning("Registry path inaccessible or not found: %s", wxString(subKey));
-                continue;
+                wxLogWarning("Registry path inaccessible or not found: %s", wxString(fullKeyPath));
+                return;
             }
 
-            DWORD index = 0;
-            WCHAR keyName[256];
+            // use foundKeysMutex directly
+            RecursiveSearchRegistry(hKey, fullKeyPath, progNameW, foundKeysMutex, foundKeys);
 
-            // Enumerate subkeys under current registry path.
-            while (true) {
-                DWORD keyNameLen = 256;
-                LONG result = RegEnumKeyExW(hKey, index++, keyName, &keyNameLen, NULL, NULL, NULL, NULL);
-                if (result == ERROR_NO_MORE_ITEMS) break;
-                if (result != ERROR_SUCCESS) continue;
-
-                std::wstring nameStr(keyName);
-                std::wstring lowerName = nameStr;
-                std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::towlower);
-
-                // Check if the subkey contains the program name substring.
-                if (lowerName.find(progNameW) != std::wstring::npos) {
-                    wchar_t rootStr[20];
-                    if (root == HKEY_LOCAL_MACHINE) {
-                        wcscpy(rootStr, L"HKLM");
-                    }
-                    else if (root == HKEY_CURRENT_USER) {
-                        wcscpy(rootStr, L"HKCU");
-                    }
-                    else {
-                        wcscpy(rootStr, L"UNKNOWN");
-                    }
-
-                    // Build full key path with root prefix.
-                    std::wstring fullKey = std::wstring(rootStr) + L"\\" + subKey + L"\\" + nameStr;
-                    foundKeys.push_back(fullKey);
-                    wxLogInfo("Found leftover registry key: %s", wxString(fullKey));
-                }
-            }
             RegCloseKey(hKey);
+        });
+    }
+
+    for (auto& worker : workers) {
+        if (worker.joinable()) {
+            worker.join();
         }
     }
 
     return foundKeys;
 }
+
+
+std::optional<wxString> FindRegistryPathForProgram(
+    const std::map<wxString, wxString>& registryPaths,
+    const wxString& normalizedName)
+{
+    wxString lowered = normalizedName.Lower();
+
+    for (const auto& [key, value] : registryPaths) {
+        wxString keyLower = key.Lower();
+
+        if (keyLower.Contains(lowered) && !value.IsEmpty()) {
+            return value;
+        }
+    }
+    return std::nullopt;
+}
+
 void ReadProgramsFromRegistry(HKEY root, const std::string& path,
     std::map<wxString, wxString>& programs,
     std::map<wxString, wxString>& manufacturers)

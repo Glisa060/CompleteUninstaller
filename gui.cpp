@@ -166,7 +166,6 @@ void MyFrame::OnAnalyseMenu(wxCommandEvent&)
 				Close(); // Optional: close current instance
 			}
 		}
-
 		return;
 	}
 
@@ -176,37 +175,45 @@ void MyFrame::OnAnalyseMenu(wxCommandEvent&)
 		return;
 	}
 
-	auto name = treeCtrl->GetItemText(selected).ToStdString();
+	wxString wxName = treeCtrl->GetItemText(selected);
+	std::wstring name(wxName.begin(), wxName.end());
 
-	// Get uninstall string from map (or registry)
-	wxString uninstallStr = uninstallerPaths.contains(name) ? uninstallerPaths[name] : wxString("Uninstall string not found.");
+	// Normalize the search term (lowercase, trim, etc)
+	std::wstring normalizedName = NormalizeSearchTerm(name);
+	wxLogMessage("Normalized search term: %s", wxString(normalizedName));
 
-	std::vector<std::wstring> regVec = { std::wstring(registryPaths[name].begin(), registryPaths[name].end()) };
+	// Try to find uninstall path from your map using FindRegistryPathForProgram
+	std::optional<wxString> uninstallPathOpt = FindRegistryPathForProgram(uninstallerPaths, wxString(normalizedName));
 
-	// Create wxBusyInfo on the heap, so it lives beyond this function scope
+	wxString uninstallStr = uninstallPathOpt.value_or("Uninstall string not found.");
+
+	//TODO: Expand this to include more paths, when expanded now it causes a crash
+	// Find the issue with the crash and fix it
+	// Define registry uninstall key paths
+	std::vector<std::wstring> regVec = {
+		L"HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+		L"HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+		L"HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall"
+	};
+
+	// Define file search paths
+	std::vector<std::wstring> filePaths = {
+		GetProgramFilesDir(),
+		GetProgramFilesX86Dir(),
+		GetKnownFolderPath(FOLDERID_LocalAppData),
+		GetKnownFolderPath(FOLDERID_RoamingAppData),
+		GetKnownFolderPath(FOLDERID_ProgramData)
+	};
+
 	wxBusyInfo* busy = new wxBusyInfo("Analysing leftovers...", this);
 
 	RunInBackground<AnalysisResult>(
-		[name, regVec]() -> AnalysisResult {
+		[normalizedName, filePaths, regVec]() -> AnalysisResult {
 		try {
-			std::vector<std::wstring> filePaths = {
-				GetProgramFilesDir(), GetProgramFilesX86Dir(),
-				GetKnownFolderPath(FOLDERID_LocalAppData),
-				GetKnownFolderPath(FOLDERID_RoamingAppData),
-				GetKnownFolderPath(FOLDERID_ProgramData)
-			};
-
-			std::vector<std::wstring> searchTerms = { std::wstring(name.begin(), name.end()) };
-			//TODO: Normalize the search term better to account for x64, x86 and other variations
-			auto& cleanedTerms = searchTerms;
-			cleanedTerms[0] = NormalizeSearchTerm(searchTerms[0]);
-			wxLogMessage("Normalized search term: %s", cleanedTerms[0]);
-			auto files = SearchLeftoverFiles(filePaths, cleanedTerms);
-			//TODO: Fix Registry Key search include more Hives like HKEY_USERS, HKEY_CLASSES_ROOT, etc.
-			// search is pretty basic, just looking for the program name in registry paths
-			auto reg = SearchRegistryKeys(regVec, std::wstring(name.begin(), name.end()));
-			auto svc = SearchServicesAndProcesses(std::wstring(name.begin(), name.end()));
-
+			std::vector<std::wstring> terms = { normalizedName };
+			auto files = SearchLeftoverFiles(filePaths, terms);
+			auto reg = SearchRegistryKeys(regVec, wxString(normalizedName));
+			auto svc = SearchServicesAndProcesses(normalizedName);
 			return { files, reg, svc };
 		}
 		catch (const std::exception& e) {
@@ -219,12 +226,10 @@ void MyFrame::OnAnalyseMenu(wxCommandEvent&)
 	},
 		[this, uninstallStr, busy](AnalysisResult result) {
 		wxTheApp->CallAfter([this, result, uninstallStr, busy]() {
-			delete busy; // Close the busy popup
-
+			delete busy;
 			wxLogMessage("Uninstall string: %s", uninstallStr);
 
 			size_t total = result.files.size() + result.registryKeys.size() + result.services.size();
-
 			if (total == 0) {
 				wxMessageBox("No leftovers found.", "Clean", wxICON_INFORMATION);
 			}
@@ -238,13 +243,10 @@ void MyFrame::OnAnalyseMenu(wxCommandEvent&)
 					result.registryKeys.size(),
 					result.services.size());
 				wxMessageBox(msg, "Analysis Results", wxOK | wxICON_INFORMATION);
-
-				// You can now use individual vectors for display
 				DisplayLeftovers(result.files, result.registryKeys, result.services);
 			}
 		});
 	}
-
 	);
 }
 
@@ -368,7 +370,7 @@ void MyFrame::OnRestartAsAdmin(wxCommandEvent&) {
 	}
 }
 
-void ApplyThemeToWindow(wxWindow* win, const wxColour& bgColor, const wxColour& fgColor)
+void MyFrame::ApplyThemeToWindow(wxWindow* win, const wxColour& bgColor, const wxColour& fgColor)
 {
 	if (!win) return;
 

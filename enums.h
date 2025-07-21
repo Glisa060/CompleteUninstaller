@@ -15,4 +15,9 @@ enum
 
 };
 
+struct RegistryRootKey {
+    HKEY hive;
+    std::wstring subKey;
+};
+
 enum class Theme { Light, Dark };

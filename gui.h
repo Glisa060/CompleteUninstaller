@@ -48,6 +48,8 @@ private:
     void OnThemeSelect(wxCommandEvent& event);
     void ApplyTheme(const wxString& theme);
     void LoadTheme();
+    void ApplyThemeToWindow(wxWindow* win, const wxColour& bgColor, const wxColour& fgColor);
+
 
     void OnTreeSelectionChanged(wxTreeEvent& event);  
     void PopulateTreeView();  
